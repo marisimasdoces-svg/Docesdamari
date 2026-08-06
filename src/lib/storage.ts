@@ -29,14 +29,14 @@ function mergeWithDefaults(parsed: Partial<AppState>): AppState {
     ...parsed,
     users: parsed?.users?.length ? parsed.users : INITIAL_STATE.users,
     departments: parsed?.departments?.length ? parsed.departments : INITIAL_STATE.departments,
-    buyers: parsed?.buyers || INITIAL_STATE.buyers,
-    sweets: parsed?.sweets || INITIAL_STATE.sweets,
-    batches: parsed?.batches || INITIAL_STATE.batches,
-    sales: parsed?.sales || INITIAL_STATE.sales,
-    payments: parsed?.payments || INITIAL_STATE.payments,
-    inventory: parsed?.inventory || INITIAL_STATE.inventory,
-    recipes: parsed?.recipes || INITIAL_STATE.recipes,
-    expenses: parsed?.expenses || INITIAL_STATE.expenses,
+    buyers: parsed?.buyers || [],
+    sweets: parsed?.sweets || [],
+    batches: parsed?.batches || [],
+    sales: parsed?.sales || [],
+    payments: parsed?.payments || [],
+    inventory: parsed?.inventory || [],
+    recipes: parsed?.recipes || [],
+    expenses: parsed?.expenses || [],
   };
 }
 
@@ -56,11 +56,11 @@ export function saveState(state: AppState, skipFirebaseSync = false): void {
 async function syncToFirebase(state: AppState) {
   try {
     isSavingToFirebase = true;
-    // Strip current session temporary info if needed, but save all core entities
+    // Overwrite document state cleanly so deleted test items are wiped from cloud
     await setDoc(APP_STATE_DOC_REF, {
       ...state,
       lastUpdated: new Date().toISOString(),
-    }, { merge: true });
+    });
     firebaseSyncActive = true;
   } catch (err) {
     console.warn('Firebase Firestore save warning (offline mode fallback active):', err);
