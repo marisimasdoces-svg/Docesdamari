@@ -275,8 +275,26 @@ export const Navigation: React.FC<NavigationProps> = ({
               </div>
             )}
 
+            {/* Firebase Cloud Sync Status */}
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold shrink-0 text-sm shadow-xs animate-pulse">
+                ☁️
+              </div>
+              <div className="text-left text-xs">
+                <div className="font-extrabold text-emerald-950 flex items-center gap-1.5">
+                  <span>Sincronização em Nuvem Ativa</span>
+                  <span className="bg-emerald-200 text-emerald-900 text-[10px] px-1.5 py-0.5 rounded-full font-black">
+                    ONLINE
+                  </span>
+                </div>
+                <div className="text-emerald-800 text-[11px] font-medium">
+                  Projeto Firebase: <code className="font-mono font-bold">docesdamari-e34b7</code>
+                </div>
+              </div>
+            </div>
+
             <p className="text-xs text-slate-500">
-              Todos os seus registros de vendas, compradores por repartição, cobranças e estoque ficam armazenados localmente.
+              Todas as suas vendas, receitas, pagamentos e cobranças estão salvas em tempo real no seu banco de dados Firebase.
             </p>
 
             <div className="grid grid-cols-2 gap-3">

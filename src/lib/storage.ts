@@ -1,8 +1,11 @@
 import { AppState } from '../types';
 import { INITIAL_STATE } from '../data/initialData';
+import { APP_STATE_DOC_REF, onSnapshot, setDoc } from './firebase';
 
 const STORAGE_KEY = 'marisimas_doces_app_v1';
 const LISTENERS: Array<(state: AppState) => void> = [];
+let firebaseSyncActive = false;
+let isSavingToFirebase = false;
 
 export function getStoredState(): AppState {
   try {
@@ -13,33 +16,93 @@ export function getStoredState(): AppState {
     }
     const parsed = JSON.parse(raw);
     // Ensure all required fields exist
-    return {
-      ...INITIAL_STATE,
-      ...parsed,
-      users: parsed.users?.length ? parsed.users : INITIAL_STATE.users,
-      departments: parsed.departments?.length ? parsed.departments : INITIAL_STATE.departments,
-      buyers: parsed.buyers || INITIAL_STATE.buyers,
-      sweets: parsed.sweets || INITIAL_STATE.sweets,
-      batches: parsed.batches || INITIAL_STATE.batches,
-      sales: parsed.sales || INITIAL_STATE.sales,
-      payments: parsed.payments || INITIAL_STATE.payments,
-      inventory: parsed.inventory || INITIAL_STATE.inventory,
-      recipes: parsed.recipes || INITIAL_STATE.recipes,
-      expenses: parsed.expenses || INITIAL_STATE.expenses,
-    };
+    return mergeWithDefaults(parsed);
   } catch (err) {
     console.error('Error reading state from localStorage:', err);
     return INITIAL_STATE;
   }
 }
 
-export function saveState(state: AppState): void {
+function mergeWithDefaults(parsed: Partial<AppState>): AppState {
+  return {
+    ...INITIAL_STATE,
+    ...parsed,
+    users: parsed?.users?.length ? parsed.users : INITIAL_STATE.users,
+    departments: parsed?.departments?.length ? parsed.departments : INITIAL_STATE.departments,
+    buyers: parsed?.buyers || INITIAL_STATE.buyers,
+    sweets: parsed?.sweets || INITIAL_STATE.sweets,
+    batches: parsed?.batches || INITIAL_STATE.batches,
+    sales: parsed?.sales || INITIAL_STATE.sales,
+    payments: parsed?.payments || INITIAL_STATE.payments,
+    inventory: parsed?.inventory || INITIAL_STATE.inventory,
+    recipes: parsed?.recipes || INITIAL_STATE.recipes,
+    expenses: parsed?.expenses || INITIAL_STATE.expenses,
+  };
+}
+
+export function saveState(state: AppState, skipFirebaseSync = false): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     notifyListeners(state);
+
+    if (!skipFirebaseSync) {
+      syncToFirebase(state);
+    }
   } catch (err) {
     console.error('Error saving state to localStorage:', err);
   }
+}
+
+async function syncToFirebase(state: AppState) {
+  try {
+    isSavingToFirebase = true;
+    // Strip current session temporary info if needed, but save all core entities
+    await setDoc(APP_STATE_DOC_REF, {
+      ...state,
+      lastUpdated: new Date().toISOString(),
+    }, { merge: true });
+    firebaseSyncActive = true;
+  } catch (err) {
+    console.warn('Firebase Firestore save warning (offline mode fallback active):', err);
+  } finally {
+    isSavingToFirebase = false;
+  }
+}
+
+export function initFirebaseSync(onRemoteUpdate: (state: AppState) => void): () => void {
+  try {
+    const unsubscribe = onSnapshot(
+      APP_STATE_DOC_REF,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          firebaseSyncActive = true;
+          const remoteData = docSnap.data() as Partial<AppState>;
+          if (remoteData && typeof remoteData === 'object') {
+            const merged = mergeWithDefaults(remoteData);
+            // Save locally without re-triggering cloud write loop
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+            notifyListeners(merged);
+            onRemoteUpdate(merged);
+          }
+        } else {
+          // First time initialization in Firebase: write local state to Firebase
+          const currentState = getStoredState();
+          syncToFirebase(currentState);
+        }
+      },
+      (error) => {
+        console.warn('Firestore subscription status:', error.message);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.error('Failed to initialize Firebase snapshot listener:', err);
+    return () => {};
+  }
+}
+
+export function isFirebaseConnected(): boolean {
+  return firebaseSyncActive;
 }
 
 export function subscribeState(callback: (state: AppState) => void): () => void {

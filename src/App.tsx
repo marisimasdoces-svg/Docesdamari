@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppState, User } from './types';
-import { getStoredState, saveState, getCurrentMonthKey } from './lib/storage';
+import { getStoredState, saveState, getCurrentMonthKey, initFirebaseSync } from './lib/storage';
 import { SplashOpening } from './components/SplashOpening';
 import { LoginPage } from './components/LoginPage';
 import { Navigation, TabType } from './components/Navigation';
@@ -16,10 +16,22 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthKey());
 
-  // Keep state synchronized with storage
+  // Keep state synchronized with local storage & Firebase real-time cloud database
   useEffect(() => {
     const fresh = getStoredState();
     setAppState(fresh);
+
+    // Subscribe to Firebase Firestore live updates
+    const unsubscribeFirebase = initFirebaseSync((remoteState) => {
+      setAppState((prev) => ({
+        ...remoteState,
+        currentUser: prev.currentUser || remoteState.currentUser,
+      }));
+    });
+
+    return () => {
+      unsubscribeFirebase();
+    };
   }, []);
 
   const handleStateChange = (newState: AppState) => {
