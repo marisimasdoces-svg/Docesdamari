@@ -21,24 +21,27 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onSelectTab,
 }) => {
   // Stats calculation
-  const salesInMonth = state.sales.filter((s) => s.monthKey === selectedMonth);
+  const salesInMonth = state.sales.filter(
+    (s) => s.monthKey === selectedMonth || (s.saleDate && s.saleDate.startsWith(selectedMonth))
+  );
   const totalSalesCount = salesInMonth.length;
-  const totalSweetsSold = salesInMonth.reduce((acc, curr) => acc + curr.quantity, 0);
+  const totalSweetsSold = salesInMonth.reduce((acc, curr) => acc + (curr.quantity || 1), 0);
 
   // Billing stats
-  const totalGross = salesInMonth.reduce((acc, curr) => acc + curr.totalPrice, 0);
+  const totalGross = salesInMonth.reduce((acc, curr) => acc + (curr.totalPrice || 0), 0);
   const paidUpfront = salesInMonth
     .filter((s) => s.isPaidImmediately)
-    .reduce((acc, curr) => acc + curr.totalPrice, 0);
+    .reduce((acc, curr) => acc + (curr.totalPrice || 0), 0);
   const settledPayments = state.payments
     .filter((p) => p.monthKey === selectedMonth)
-    .reduce((acc, curr) => acc + curr.amountPaid, 0);
+    .reduce((acc, curr) => acc + (curr.amountPaid || 0), 0);
   const totalReceived = Math.min(totalGross, paidUpfront + settledPayments);
   const totalPending = Math.max(0, totalGross - totalReceived);
 
   // Active production batches & stock calculations
   const todayISO = new Date().toISOString().slice(0, 10);
   const todayLocalStr = new Date().toLocaleDateString('sv-SE');
+  const todayBR = new Date().toLocaleDateString('pt-BR');
 
   const batchesToday = state.batches.filter((b) => {
     if (!b.createdAt && !b.startDate) return false;
@@ -58,8 +61,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   // Total sales made today (summing doces quantities sold)
   const salesToday = state.sales.filter((s) => {
     if (!s.saleDate) return false;
+    const saleDateObj = new Date(s.saleDate);
+    if (isNaN(saleDateObj.getTime())) return false;
+    const saleBR = saleDateObj.toLocaleDateString('pt-BR');
     const d = s.saleDate.slice(0, 10);
-    return d === todayISO || d === todayLocalStr;
+    return saleBR === todayBR || d === todayISO || d === todayLocalStr;
   });
   const totalSoldToday = salesToday.reduce((acc, s) => acc + (s.quantity || 1), 0);
 
@@ -67,14 +73,30 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   const activeBatches = state.batches.filter((b) => b.status === 'active');
   const activeBatch = activeBatches[0] || state.batches[0];
 
-  // Calculate total produced and total sold for active stock
+  // Calculate total sold directly from sales for active batches
+  const activeBatchIds = new Set(activeBatches.map((b) => b.id));
+  const activeSweetNames = new Set(activeBatches.map((b) => b.sweetName?.toLowerCase()));
+
+  const salesForActiveBatch = state.sales.filter((s) => {
+    if (s.batchId && activeBatchIds.has(s.batchId)) return true;
+    if (s.sweetName && activeSweetNames.has(s.sweetName.toLowerCase())) {
+      return true;
+    }
+    return false;
+  });
+
+  const totalSoldFromBatchSales = salesForActiveBatch.reduce((acc, s) => acc + (s.quantity || 1), 0);
+
+  // Derive maximum sold potes from all valid sources
+  const totalActiveSold = Math.max(
+    totalSoldToday,
+    totalSoldFromBatchSales,
+    activeBatches.reduce((acc, b) => acc + (b.totalSold || 0), 0)
+  );
+
   const totalActiveProduced = activeBatches.length > 0
     ? activeBatches.reduce((acc, b) => acc + (b.totalProduced || 0), 0)
-    : (producedToday > 0 ? producedToday : state.recipes.reduce((acc, r) => acc + (r.yieldsCount || 0), 0));
-
-  const totalActiveSold = activeBatches.length > 0
-    ? activeBatches.reduce((acc, b) => acc + (b.totalSold || 0), 0)
-    : totalSoldToday;
+    : (producedToday > 0 ? producedToday : (state.recipes[0]?.yieldsCount || 33));
 
   // Available potes remaining (deducts exact quantity of doces sold)
   const availableToSellToday = Math.max(0, totalActiveProduced - totalActiveSold);
@@ -123,7 +145,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                   Disponíveis p/ Venda Hoje
                 </div>
                 <div className="text-base sm:text-lg font-black text-white font-mono">
-                  {availableToSellToday} <span className="text-xs font-semibold text-purple-200">potes p/ vender {producedToday > 0 ? `(de ${producedToday} prod.)` : ''}</span>
+                  {availableToSellToday} <span className="text-xs font-semibold text-purple-200">potes p/ vender {totalActiveSold > 0 ? `(${totalActiveSold} já vendidos hoje)` : `(de ${totalActiveProduced} prod.)`}</span>
                 </div>
               </div>
             </div>

@@ -11,7 +11,6 @@ export function getStoredState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      saveState(INITIAL_STATE);
       return INITIAL_STATE;
     }
     const parsed = JSON.parse(raw);
@@ -20,6 +19,17 @@ export function getStoredState(): AppState {
     console.error('Error reading state from localStorage:', err);
     return INITIAL_STATE;
   }
+}
+
+function mergeArraysById<T extends { id: string }>(arrA: T[], arrB: T[]): T[] {
+  const map = new Map<string, T>();
+  (arrA || []).forEach((item) => {
+    if (item && item.id) map.set(item.id, item);
+  });
+  (arrB || []).forEach((item) => {
+    if (item && item.id) map.set(item.id, item);
+  });
+  return Array.from(map.values());
 }
 
 function cleanFictitiousData(state: AppState): AppState {
@@ -36,20 +46,37 @@ function cleanFictitiousData(state: AppState): AppState {
   };
 }
 
-function mergeWithDefaults(parsed: Partial<AppState>): AppState {
+function mergeWithDefaults(parsed: Partial<AppState>, currentLocal?: Partial<AppState>): AppState {
+  const mergedSales = mergeArraysById<any>(parsed?.sales || [], currentLocal?.sales || []);
+  const mergedBuyers = mergeArraysById<any>(parsed?.buyers || [], currentLocal?.buyers || []);
+  const mergedPayments = mergeArraysById<any>(parsed?.payments || [], currentLocal?.payments || []);
+  const mergedBatches = mergeArraysById<any>(parsed?.batches || [], currentLocal?.batches || []);
+  const mergedExpenses = mergeArraysById<any>(parsed?.expenses || [], currentLocal?.expenses || []);
+  const mergedInventory = mergeArraysById<any>(parsed?.inventory || [], currentLocal?.inventory || []);
+  const mergedRecipes = mergeArraysById<any>(parsed?.recipes || [], currentLocal?.recipes || []);
+
+  const mergedDepts = Array.from(
+    new Set([
+      ...(INITIAL_STATE.departments || []),
+      ...(parsed?.departments || []),
+      ...(currentLocal?.departments || []),
+    ])
+  );
+
   const merged: AppState = {
     ...INITIAL_STATE,
+    ...currentLocal,
     ...parsed,
     users: parsed?.users?.length ? parsed.users : INITIAL_STATE.users,
-    departments: parsed?.departments?.length ? parsed.departments : INITIAL_STATE.departments,
-    buyers: Array.isArray(parsed?.buyers) ? parsed.buyers : [],
+    departments: mergedDepts,
+    buyers: mergedBuyers,
     sweets: Array.isArray(parsed?.sweets) && parsed.sweets.length ? parsed.sweets : INITIAL_STATE.sweets,
-    batches: Array.isArray(parsed?.batches) ? parsed.batches : INITIAL_STATE.batches,
-    sales: Array.isArray(parsed?.sales) ? parsed.sales : [],
-    payments: Array.isArray(parsed?.payments) ? parsed.payments : [],
-    inventory: Array.isArray(parsed?.inventory) ? parsed.inventory : INITIAL_STATE.inventory,
-    recipes: Array.isArray(parsed?.recipes) ? parsed.recipes : INITIAL_STATE.recipes,
-    expenses: Array.isArray(parsed?.expenses) ? parsed.expenses : [],
+    batches: mergedBatches.length ? mergedBatches : INITIAL_STATE.batches,
+    sales: mergedSales,
+    payments: mergedPayments,
+    inventory: mergedInventory.length ? mergedInventory : INITIAL_STATE.inventory,
+    recipes: mergedRecipes.length ? mergedRecipes : INITIAL_STATE.recipes,
+    expenses: mergedExpenses,
   };
   return cleanFictitiousData(merged);
 }
@@ -71,6 +98,31 @@ export function saveState(state: AppState, skipFirebaseSync = false): void {
 async function syncToFirebase(state: AppState) {
   try {
     isSavingToFirebase = true;
+
+    // Safety check: if local state has 0 sales, double-check Firestore first to avoid overwriting existing cloud sales
+    if ((!state.sales || state.sales.length === 0) || (!state.buyers || state.buyers.length === 0)) {
+      try {
+        const cloudSnap = await getDoc(APP_STATE_DOC_REF);
+        if (cloudSnap.exists()) {
+          const cloudData = cloudSnap.data() as AppState;
+          if (cloudData && cloudData.sales && cloudData.sales.length > 0) {
+            // Cloud has sales! Merge local and cloud before saving
+            const mergedWithCloud = mergeWithDefaults(cloudData, state);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedWithCloud));
+            notifyListeners(mergedWithCloud);
+            await setDoc(APP_STATE_DOC_REF, {
+              ...mergedWithCloud,
+              lastUpdated: new Date().toISOString(),
+            });
+            firebaseSyncActive = true;
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Safety check cloud read failed:', err);
+      }
+    }
+
     await setDoc(APP_STATE_DOC_REF, {
       ...state,
       lastUpdated: new Date().toISOString(),
@@ -90,7 +142,9 @@ export async function fetchCloudState(): Promise<AppState | null> {
       firebaseSyncActive = true;
       const remoteData = docSnap.data() as Partial<AppState>;
       if (remoteData && typeof remoteData === 'object') {
-        const remoteMerged = mergeWithDefaults(remoteData);
+        const localRaw = localStorage.getItem(STORAGE_KEY);
+        const localParsed = localRaw ? JSON.parse(localRaw) : {};
+        const remoteMerged = mergeWithDefaults(remoteData, localParsed);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteMerged));
         notifyListeners(remoteMerged);
         return remoteMerged;
@@ -111,16 +165,20 @@ export function initFirebaseSync(onRemoteUpdate: (state: AppState) => void): () 
           firebaseSyncActive = true;
           const remoteData = docSnap.data() as Partial<AppState>;
           if (remoteData && typeof remoteData === 'object') {
-            const remoteMerged = mergeWithDefaults(remoteData);
+            const localRaw = localStorage.getItem(STORAGE_KEY);
+            const localParsed = localRaw ? JSON.parse(localRaw) : {};
+            const remoteMerged = mergeWithDefaults(remoteData, localParsed);
 
             localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteMerged));
             notifyListeners(remoteMerged);
             onRemoteUpdate(remoteMerged);
           }
         } else {
-          // First time initialization in Firebase: push local state to cloud
+          // First time initialization in Firebase: push local state to cloud if local state has data
           const currentState = getStoredState();
-          syncToFirebase(currentState);
+          if (currentState.sales.length > 0 || currentState.buyers.length > 0) {
+            syncToFirebase(currentState);
+          }
         }
       },
       (error) => {
