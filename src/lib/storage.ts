@@ -76,6 +76,22 @@ function mergeWithDefaults(parsed: Partial<AppState>, currentLocal?: Partial<App
     ])
   );
 
+  // Dynamically calculate totalSold for batches based on merged sales
+  const batchSoldMap = new Map<string, number>();
+  mergedSales.forEach((s) => {
+    if (s.batchId) {
+      batchSoldMap.set(s.batchId, (batchSoldMap.get(s.batchId) || 0) + (s.quantity || 1));
+    }
+  });
+
+  const updatedBatches = mergedBatches.map((b) => {
+    const soldFromSales = batchSoldMap.get(b.id);
+    if (soldFromSales !== undefined) {
+      return { ...b, totalSold: Math.max(b.totalSold || 0, soldFromSales) };
+    }
+    return b;
+  });
+
   const merged: AppState = {
     ...INITIAL_STATE,
     ...currentLocal,
@@ -84,7 +100,7 @@ function mergeWithDefaults(parsed: Partial<AppState>, currentLocal?: Partial<App
     departments: mergedDepts,
     buyers: mergedBuyers,
     sweets: Array.isArray(parsed?.sweets) && parsed.sweets.length ? parsed.sweets : INITIAL_STATE.sweets,
-    batches: mergedBatches.length ? mergedBatches : INITIAL_STATE.batches,
+    batches: updatedBatches.length ? updatedBatches : INITIAL_STATE.batches,
     sales: mergedSales,
     payments: mergedPayments,
     inventory: mergedInventory.length ? mergedInventory : INITIAL_STATE.inventory,
@@ -157,6 +173,17 @@ export async function fetchCloudState(): Promise<AppState | null> {
         const remoteMerged = mergeWithDefaults(remoteData, localParsed);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteMerged));
         notifyListeners(remoteMerged);
+
+        // Auto push back to Cloud if merged state has more sales/buyers than Firestore
+        const remoteSalesLen = Array.isArray(remoteData.sales) ? remoteData.sales.length : 0;
+        const remoteBuyersLen = Array.isArray(remoteData.buyers) ? remoteData.buyers.length : 0;
+        if (remoteMerged.sales.length > remoteSalesLen || remoteMerged.buyers.length > remoteBuyersLen) {
+          setDoc(APP_STATE_DOC_REF, {
+            ...remoteMerged,
+            lastUpdated: new Date().toISOString(),
+          }).catch((err) => console.warn('Auto sync back to Firestore failed:', err));
+        }
+
         return remoteMerged;
       }
     }
@@ -182,6 +209,16 @@ export function initFirebaseSync(onRemoteUpdate: (state: AppState) => void): () 
             localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteMerged));
             notifyListeners(remoteMerged);
             onRemoteUpdate(remoteMerged);
+
+            // Auto push back to Cloud if merged local state has more sales/buyers than Firestore
+            const remoteSalesLen = Array.isArray(remoteData.sales) ? remoteData.sales.length : 0;
+            const remoteBuyersLen = Array.isArray(remoteData.buyers) ? remoteData.buyers.length : 0;
+            if (remoteMerged.sales.length > remoteSalesLen || remoteMerged.buyers.length > remoteBuyersLen) {
+              setDoc(APP_STATE_DOC_REF, {
+                ...remoteMerged,
+                lastUpdated: new Date().toISOString(),
+              }).catch((err) => console.warn('Auto sync back to Firestore failed:', err));
+            }
           }
         } else {
           // First time initialization in Firebase: push local state to cloud if local state has data
@@ -208,13 +245,25 @@ export function isFirebaseConnected(): boolean {
 
 export async function forceSyncCloud(): Promise<boolean> {
   try {
-    const remoteState = await fetchCloudState();
-    if (remoteState) {
+    const localRaw = localStorage.getItem(STORAGE_KEY);
+    const localParsed = localRaw ? JSON.parse(localRaw) : getStoredState();
+
+    const docSnap = await getDoc(APP_STATE_DOC_REF);
+    if (docSnap.exists()) {
+      const remoteData = docSnap.data() as Partial<AppState>;
+      const merged = mergeWithDefaults(remoteData, localParsed);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      notifyListeners(merged);
+
+      await setDoc(APP_STATE_DOC_REF, {
+        ...merged,
+        lastUpdated: new Date().toISOString(),
+      });
+      return true;
+    } else {
+      await syncToFirebase(localParsed);
       return true;
     }
-    const state = getStoredState();
-    await syncToFirebase(state);
-    return true;
   } catch (err) {
     console.error('Force sync failed:', err);
     return false;
