@@ -1,0 +1,122 @@
+import { AppState } from '../types';
+
+const todayISO = new Date().toISOString();
+const todayDate = todayISO.slice(0, 10);
+
+export const INITIAL_STATE: AppState = {
+  users: [
+    {
+      id: 'usr-damer',
+      name: 'Damer Simas',
+      username: 'DAMERSIMAS',
+      role: 'admin',
+      avatar: '👨‍🍳',
+      badge: 'Mestre Doceiro / Gestor',
+    },
+    {
+      id: 'usr-mari',
+      name: 'Mari Simas',
+      username: 'MARISIMAS',
+      role: 'manager',
+      avatar: '👩‍🍳',
+      badge: 'Chef Confeiteira / Mari',
+    },
+  ],
+  currentUser: null,
+  departments: [
+    '1º esqd',
+    '2º esqd',
+    '3º esqd',
+    'Esqd Cap',
+    'fanfarra',
+    'pmgu',
+    'outros',
+  ],
+  buyers: [],
+  sweets: [
+    {
+      id: 'sweet-1',
+      name: 'Bolo de Pote Gourmet',
+      price: 13.0,
+      description: 'Delicioso bolo de pote artesanal gourmet.',
+      active: true,
+      category: 'Bolo de Pote',
+    },
+  ],
+  batches: [
+    {
+      id: 'batch-active-1',
+      weekLabel: 'Semana Atual',
+      startDate: todayDate,
+      endDate: todayDate,
+      sweetId: 'sweet-1',
+      sweetName: 'Bolo de Pote Gourmet',
+      totalProduced: 33,
+      totalSold: 0,
+      unitPrice: 13.0,
+      status: 'active',
+      createdAt: todayISO,
+    },
+  ],
+  sales: [],
+  payments: [],
+  inventory: [
+    {
+      id: 'inv-1',
+      name: 'Potes Plásticos (250ml)',
+      category: 'embalagem',
+      unit: 'unidade',
+      totalQuantityBought: 100,
+      remainingQuantity: 67,
+      totalCostPaid: 50.0,
+      unitCost: 0.5,
+      purchaseDate: todayDate,
+      minAlertQuantity: 10,
+    },
+    {
+      id: 'inv-2',
+      name: 'Leite Condensado 395g',
+      category: 'ingrediente',
+      unit: 'caixa',
+      totalQuantityBought: 20,
+      remainingQuantity: 15,
+      totalCostPaid: 120.0,
+      unitCost: 6.0,
+      purchaseDate: todayDate,
+      minAlertQuantity: 5,
+    },
+    {
+      id: 'inv-3',
+      name: 'Creme de Leite 200g',
+      category: 'ingrediente',
+      unit: 'caixa',
+      totalQuantityBought: 20,
+      remainingQuantity: 16,
+      totalCostPaid: 70.0,
+      unitCost: 3.5,
+      purchaseDate: todayDate,
+      minAlertQuantity: 5,
+    },
+  ],
+  recipes: [
+    {
+      id: 'recipe-1',
+      sweetId: 'sweet-1',
+      sweetName: 'Bolo de Pote Gourmet',
+      yieldsCount: 33,
+      packagingCostPerUnit: 0.5,
+      calculatedUnitCost: 4.5,
+      updatedAt: todayISO,
+      ingredients: [
+        {
+          inventoryItemId: 'inv-1',
+          inventoryItemName: 'Potes Plásticos (250ml)',
+          quantityUsed: 33,
+          unit: 'unidade',
+          estimatedCost: 16.5,
+        },
+      ],
+    },
+  ],
+  expenses: [],
+};

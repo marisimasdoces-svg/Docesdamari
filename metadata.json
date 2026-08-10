@@ -1,0 +1,6 @@
+{
+  "name": "Marisimas Doces Manager",
+  "description": "PWA completo de gestão de vendas, lotes semanais, cobranças por repartição, fluxo de caixa e almoxarifado de doces de pote.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
