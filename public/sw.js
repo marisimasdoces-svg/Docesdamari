@@ -1,4 +1,4 @@
-const CACHE_NAME = 'marisimas-doces-v4';
+const CACHE_NAME = 'marisimas-doces-v5';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -37,7 +37,30 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-  // Network first strategy to keep assets and app fresh
+  
+  const url = new URL(event.request.url);
+
+  // For HTML page navigation, ALWAYS network first with cache fallback
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.html')) {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-cache' })
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          return caches.match('/index.html') || caches.match(event.request);
+        })
+    );
+    return;
+  }
+
+  // Network first strategy for all assets
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {
@@ -50,12 +73,7 @@ self.addEventListener('fetch', (event) => {
         return networkResponse;
       })
       .catch(() => {
-        return caches.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          return caches.match('/index.html');
-        });
+        return caches.match(event.request);
       })
   );
 });

@@ -21,14 +21,27 @@ export function getStoredState(): AppState {
   }
 }
 
-function mergeArraysById<T extends { id: string }>(arrA: T[], arrB: T[]): T[] {
+function mergeArraysById<T extends { id: string; paymentStatus?: string; isPaidImmediately?: boolean }>(arrA: T[], arrB: T[]): T[] {
   const map = new Map<string, T>();
-  (arrA || []).forEach((item) => {
-    if (item && item.id) map.set(item.id, item);
-  });
-  (arrB || []).forEach((item) => {
-    if (item && item.id) map.set(item.id, item);
-  });
+
+  const addOrUpdate = (item: T) => {
+    if (!item || !item.id) return;
+    const existing = map.get(item.id);
+    if (!existing) {
+      map.set(item.id, item);
+    } else {
+      const isPaid = item.paymentStatus === 'paid' || item.isPaidImmediately || existing.paymentStatus === 'paid' || existing.isPaidImmediately;
+      map.set(item.id, {
+        ...existing,
+        ...item,
+        paymentStatus: isPaid ? 'paid' : (item.paymentStatus || existing.paymentStatus),
+        isPaidImmediately: isPaid ? true : (item.isPaidImmediately ?? existing.isPaidImmediately),
+      });
+    }
+  };
+
+  (arrA || []).forEach(addOrUpdate);
+  (arrB || []).forEach(addOrUpdate);
   return Array.from(map.values());
 }
 
@@ -99,28 +112,25 @@ async function syncToFirebase(state: AppState) {
   try {
     isSavingToFirebase = true;
 
-    // Safety check: if local state has 0 sales, double-check Firestore first to avoid overwriting existing cloud sales
-    if ((!state.sales || state.sales.length === 0) || (!state.buyers || state.buyers.length === 0)) {
-      try {
-        const cloudSnap = await getDoc(APP_STATE_DOC_REF);
-        if (cloudSnap.exists()) {
-          const cloudData = cloudSnap.data() as AppState;
-          if (cloudData && cloudData.sales && cloudData.sales.length > 0) {
-            // Cloud has sales! Merge local and cloud before saving
-            const mergedWithCloud = mergeWithDefaults(cloudData, state);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedWithCloud));
-            notifyListeners(mergedWithCloud);
-            await setDoc(APP_STATE_DOC_REF, {
-              ...mergedWithCloud,
-              lastUpdated: new Date().toISOString(),
-            });
-            firebaseSyncActive = true;
-            return;
-          }
+    // Safety check: before saving to cloud, ALWAYS read cloud document and merge first!
+    try {
+      const cloudSnap = await getDoc(APP_STATE_DOC_REF);
+      if (cloudSnap.exists()) {
+        const cloudData = cloudSnap.data() as AppState;
+        if (cloudData && typeof cloudData === 'object') {
+          const mergedWithCloud = mergeWithDefaults(cloudData, state);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedWithCloud));
+          notifyListeners(mergedWithCloud);
+          await setDoc(APP_STATE_DOC_REF, {
+            ...mergedWithCloud,
+            lastUpdated: new Date().toISOString(),
+          });
+          firebaseSyncActive = true;
+          return;
         }
-      } catch (err) {
-        console.warn('Safety check cloud read failed:', err);
       }
+    } catch (err) {
+      console.warn('Safety check cloud read failed:', err);
     }
 
     await setDoc(APP_STATE_DOC_REF, {
