@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppState, InventoryItem, ProductionBatch, Recipe, RecipeIngredient, User } from '../types';
-import { saveState, formatCurrency } from '../lib/storage';
+import { formatCurrency } from '../lib/storage';
 import {
   Package,
   Trash2,
@@ -97,6 +97,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
   // AJUSTE RÁPIDO DE QUANTIDADE DO ESTOQUE (+ / -)
   const handleAdjustQuantity = (itemId: string, delta: number) => {
+    const nowIso = new Date().toISOString();
     const updatedInventory = state.inventory.map((item) => {
       if (item.id === itemId) {
         const newRemaining = Math.max(0, item.remainingQuantity + delta);
@@ -105,6 +106,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
           ...item,
           remainingQuantity: newRemaining,
           totalQuantityBought: newTotal,
+          updatedAt: nowIso,
         };
       }
       return item;
@@ -115,7 +117,6 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       inventory: updatedInventory,
     };
 
-    saveState(newState);
     onStateChange(newState);
   };
 
@@ -129,7 +130,6 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       inventory: updatedInventory,
     };
 
-    saveState(newState);
     onStateChange(newState);
     setConfirmDeleteId(null);
   };
@@ -235,6 +235,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     const qty = parseFormattedNumber(itemQtyStr) || 1;
     const cost = parseFormattedNumber(itemCostStr);
     const minQty = parseFormattedNumber(minAlertQtyStr) || 3;
+    const nowIso = new Date().toISOString();
 
     const newInsumo: InventoryItem = {
       id: `inv-${Date.now()}`,
@@ -246,7 +247,8 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       totalCostPaid: cost,
       unitCost: qty > 0 ? cost / qty : cost,
       expirationDate: itemExpiry,
-      purchaseDate: new Date().toISOString(),
+      purchaseDate: nowIso,
+      updatedAt: nowIso,
       minAlertQuantity: minQty,
     };
 
@@ -255,7 +257,8 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       description: `Compra: ${itemName.trim()} (${qty} ${itemUnit})`,
       category: itemCategory === 'embalagem' ? ('embalagens' as const) : ('ingredientes' as const),
       totalCost: cost,
-      date: new Date().toISOString(),
+      date: nowIso,
+      updatedAt: nowIso,
       monthKey: selectedMonth,
     };
 
@@ -265,7 +268,6 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       expenses: [newExpense, ...state.expenses],
     };
 
-    saveState(newState);
     onStateChange(newState);
 
     setItemName('');
@@ -305,6 +307,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       (s) => s.name.toLowerCase() === recipeSweetName.trim().toLowerCase()
     );
     const targetSweetId = existingSweet ? existingSweet.id : newSweetId;
+    const nowIso = new Date().toISOString();
 
     const newRecipe: Recipe = {
       id: `rec-${Date.now()}`,
@@ -318,13 +321,13 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       waterCleaningCost: waterCleaningCost,
       indirectCost: indirectCost,
       calculatedUnitCost: calculatedUnitCost,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso,
     };
 
     const updatedSweets = existingSweet
       ? state.sweets.map((s) =>
           s.id === existingSweet.id
-            ? { ...s, price: manualFinalPrice, recipeId: newRecipe.id }
+            ? { ...s, price: manualFinalPrice, recipeId: newRecipe.id, updatedAt: nowIso }
             : s
         )
       : [
@@ -336,6 +339,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
             recipeId: newRecipe.id,
             active: true,
             category: 'Doce de Pote',
+            updatedAt: nowIso,
           },
         ];
 
@@ -346,9 +350,10 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       totalProduced: yieldsCount,
       totalSold: 0,
       unitPrice: manualFinalPrice,
-      startDate: new Date().toISOString().slice(0, 10),
-      endDate: new Date().toISOString().slice(0, 10),
-      createdAt: new Date().toISOString(),
+      startDate: nowIso.slice(0, 10),
+      endDate: nowIso.slice(0, 10),
+      createdAt: nowIso,
+      updatedAt: nowIso,
       weekLabel: `Semana ${new Date().toLocaleDateString('pt-BR')}`,
       status: 'active',
     };
@@ -360,7 +365,6 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       batches: [newBatch, ...state.batches],
     };
 
-    saveState(newState);
     onStateChange(newState);
 
     setRecipeSweetName('');
@@ -380,6 +384,8 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       return;
     }
 
+    const nowIso = new Date().toISOString();
+
     const registeredSweet = state.sweets.find(
       (s) => s.name.toLowerCase() === recipe.sweetName.toLowerCase() || s.recipeId === recipe.id
     );
@@ -391,15 +397,16 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       totalProduced: qty,
       totalSold: 0,
       unitPrice: registeredSweet ? registeredSweet.price : 13.0,
-      startDate: new Date().toISOString().slice(0, 10),
-      endDate: new Date().toISOString().slice(0, 10),
-      createdAt: new Date().toISOString(),
+      startDate: nowIso.slice(0, 10),
+      endDate: nowIso.slice(0, 10),
+      createdAt: nowIso,
+      updatedAt: nowIso,
       weekLabel: `Semana ${new Date().toLocaleDateString('pt-BR')}`,
       status: 'active',
     };
 
     const updatedRecipes = state.recipes.map((r) =>
-      r.id === recipe.id ? { ...r, updatedAt: new Date().toISOString() } : r
+      r.id === recipe.id ? { ...r, updatedAt: nowIso } : r
     );
 
     const newState: AppState = {
@@ -408,7 +415,6 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       batches: [newBatch, ...state.batches],
     };
 
-    saveState(newState);
     onStateChange(newState);
     alert(`✅ Produção de ${qty} potes de "${recipe.sweetName}" registrada para hoje! A quantidade já aparece no Painel Roxo!`);
   };

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppState, Buyer, PaymentRecord, Sale, User } from '../types';
-import { saveState, formatCurrency, formatMonthShort } from '../lib/storage';
+import { formatCurrency, formatMonthShort } from '../lib/storage';
 import confetti from 'canvas-confetti';
 import {
   Receipt,
@@ -142,13 +142,15 @@ export const BillingPage: React.FC<BillingPageProps> = ({
 
   // Mark full amount as paid
   const handleMarkAsPaid = (sum: BuyerBillingSummary) => {
+    const nowIso = new Date().toISOString();
     const newPaymentRecord: PaymentRecord = {
       id: `pay-${Date.now()}`,
       buyerId: sum.buyer.id,
       buyerName: sum.buyer.name,
       monthKey: selectedMonth,
       amountPaid: sum.pendingBalance,
-      paymentDate: new Date().toISOString(),
+      paymentDate: nowIso,
+      updatedAt: nowIso,
       paymentMethod: 'pix',
       notes: 'Quitação direta pelo card flutuante de cobrança',
       registeredBy: currentUser.name,
@@ -160,7 +162,13 @@ export const BillingPage: React.FC<BillingPageProps> = ({
           sale.buyerName.trim().toLowerCase() === sum.buyer.name.trim().toLowerCase()) &&
         (!selectedMonth || sale.monthKey === selectedMonth)
       ) {
-        return { ...sale, paymentStatus: 'paid' as const, isPaidImmediately: true, paymentMethod: 'pix' };
+        return {
+          ...sale,
+          paymentStatus: 'paid' as const,
+          isPaidImmediately: true,
+          paymentMethod: 'pix',
+          updatedAt: nowIso,
+        };
       }
       return sale;
     });
@@ -171,7 +179,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({
       payments: [newPaymentRecord, ...state.payments],
     };
 
-    saveState(newState);
     onStateChange(newState);
 
     confetti({ particleCount: 70, spread: 60, origin: { y: 0.6 } });
@@ -181,13 +188,19 @@ export const BillingPage: React.FC<BillingPageProps> = ({
   // Revert payment status (desfazer quitação)
   const handleUnmarkAsPaid = (sum: BuyerBillingSummary) => {
     if (window.confirm(`Desfazer a quitação das vendas de ${sum.buyer.name}? Elas voltarão a ficar pendentes.`)) {
+      const nowIso = new Date().toISOString();
       const updatedSales = state.sales.map((sale) => {
         if (
           (sale.buyerId === sum.buyer.id ||
             sale.buyerName.trim().toLowerCase() === sum.buyer.name.trim().toLowerCase()) &&
           (!selectedMonth || sale.monthKey === selectedMonth)
         ) {
-          return { ...sale, paymentStatus: 'pending' as const, isPaidImmediately: false };
+          return {
+            ...sale,
+            paymentStatus: 'pending' as const,
+            isPaidImmediately: false,
+            updatedAt: nowIso,
+          };
         }
         return sale;
       });
@@ -207,7 +220,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         payments: updatedPayments,
       };
 
-      saveState(newState);
       onStateChange(newState);
       setActiveBuyerSummary(null);
     }
@@ -220,6 +232,7 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         `Excluir todos os lançamentos de ${sum.buyer.name}? As vendas deste comprador serão apagadas e os potes devolvidos ao estoque.`
       )
     ) {
+      const nowIso = new Date().toISOString();
       const saleIdsToDelete = new Set(sum.salesList.map((s) => s.id));
 
       const updatedBatches = state.batches.map((b) => {
@@ -227,7 +240,7 @@ export const BillingPage: React.FC<BillingPageProps> = ({
           .filter((s) => s.batchId === b.id)
           .reduce((acc, curr) => acc + curr.quantity, 0);
         if (soldInBatch > 0) {
-          return { ...b, totalSold: Math.max(0, b.totalSold - soldInBatch) };
+          return { ...b, totalSold: Math.max(0, b.totalSold - soldInBatch), updatedAt: nowIso };
         }
         return b;
       });
@@ -258,7 +271,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         batches: updatedBatches,
       };
 
-      saveState(newState);
       onStateChange(newState);
       setActiveBuyerSummary(null);
     }
@@ -270,10 +282,11 @@ export const BillingPage: React.FC<BillingPageProps> = ({
     if (!sale) return;
 
     if (window.confirm(`Excluir a venda de ${sale.quantity}x ${sale.sweetName} para ${sale.buyerName}?`)) {
+      const nowIso = new Date().toISOString();
       const updatedSales = state.sales.filter((s) => s.id !== saleId);
       const updatedBatches = state.batches.map((b) => {
         if (b.id === sale.batchId) {
-          return { ...b, totalSold: Math.max(0, b.totalSold - sale.quantity) };
+          return { ...b, totalSold: Math.max(0, b.totalSold - sale.quantity), updatedAt: nowIso };
         }
         return b;
       });
@@ -284,7 +297,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         batches: updatedBatches,
       };
 
-      saveState(newState);
       onStateChange(newState);
       setActiveBuyerSummary(null);
     }

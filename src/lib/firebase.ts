@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, setDoc, getDoc, runTransaction } from 'firebase/firestore';
 
 export const firebaseConfig = {
   apiKey: "AIzaSyB12fYf5owS9E-WfC73Uqm5-LMRBag2IDc",
@@ -21,4 +21,4 @@ export const db = getFirestore(app);
 // Firestore document reference for storing the full application state
 export const APP_STATE_DOC_REF = doc(db, 'app_data', 'main');
 
-export { doc, onSnapshot, setDoc, getDoc };
+export { doc, onSnapshot, setDoc, getDoc, runTransaction };

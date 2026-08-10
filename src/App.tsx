@@ -46,6 +46,9 @@ export default function App() {
 
     // Refresh state when window gains focus (e.g., returning to PC tab)
     const handleFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') {
+        return;
+      }
       fetchCloudState().then((remoteState) => {
         if (remoteState) {
           setAppState((prev) => ({

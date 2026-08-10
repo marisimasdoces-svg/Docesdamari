@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppState, Sale, User } from '../types';
-import { saveState, formatCurrency } from '../lib/storage';
+import { formatCurrency } from '../lib/storage';
 import {
   ShoppingBag,
   Plus,
@@ -80,6 +80,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     const unitPrice = parseFloat(retroUnitPriceStr.replace(',', '.')) || 13.0;
     const unitCost = parseFloat(retroUnitCostStr.replace(',', '.')) || 5.0;
     const totalPrice = qty * unitPrice;
+    const nowIso = new Date().toISOString();
 
     let buyer = state.buyers.find(
       (b) => b.name.toLowerCase() === retroBuyerName.trim().toLowerCase()
@@ -92,7 +93,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({
         name: retroBuyerName.trim(),
         department: retroDept.trim(),
         phone: retroPhone.trim(),
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
+        updatedAt: nowIso,
       };
       updatedBuyers = [buyer, ...updatedBuyers];
     }
@@ -121,6 +123,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       notes: retroNotes.trim(),
       isRetroactive: true,
       estimatedUnitCost: unitCost,
+      updatedAt: nowIso,
     };
 
     const newState: AppState = {
@@ -129,7 +132,6 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       sales: [newSale, ...state.sales],
     };
 
-    saveState(newState);
     onStateChange(newState);
 
     setShowRetroactiveModal(false);
@@ -166,6 +168,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     e.preventDefault();
     if (!buyerName.trim()) return;
 
+    const nowIso = new Date().toISOString();
+
     let buyer = state.buyers.find(
       (b) => b.name.toLowerCase() === buyerName.trim().toLowerCase()
     );
@@ -177,12 +181,13 @@ export const SalesPage: React.FC<SalesPageProps> = ({
         name: buyerName.trim(),
         department: buyerDept.trim(),
         phone: buyerPhone.trim(),
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
+        updatedAt: nowIso,
       };
       updatedBuyers = [buyer, ...updatedBuyers];
     } else if (buyerPhone && buyerPhone !== buyer.phone) {
       updatedBuyers = updatedBuyers.map((b) =>
-        b.id === buyer!.id ? { ...b, phone: buyerPhone.trim() } : b
+        b.id === buyer!.id ? { ...b, phone: buyerPhone.trim(), updatedAt: nowIso } : b
       );
     }
 
@@ -197,7 +202,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     if (targetBatch && updatedBatches.some((b) => b.id === targetBatch!.id)) {
       updatedBatches = updatedBatches.map((b) => {
         if (b.id === targetBatch!.id) {
-          return { ...b, totalSold: b.totalSold + quantity };
+          return { ...b, totalSold: b.totalSold + quantity, updatedAt: nowIso };
         }
         return b;
       });
@@ -214,9 +219,10 @@ export const SalesPage: React.FC<SalesPageProps> = ({
         totalProduced,
         totalSold: quantity,
         unitPrice,
-        startDate: new Date().toISOString().slice(0, 10),
-        endDate: new Date().toISOString().slice(0, 10),
-        createdAt: new Date().toISOString(),
+        startDate: nowIso.slice(0, 10),
+        endDate: nowIso.slice(0, 10),
+        createdAt: nowIso,
+        updatedAt: nowIso,
         weekLabel: 'Semana Atual',
         status: 'active' as const,
       };
@@ -235,12 +241,13 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       quantity,
       unitPrice,
       totalPrice,
-      saleDate: new Date().toISOString(),
+      saleDate: nowIso,
+      updatedAt: nowIso,
       monthKey: selectedMonth,
       weekLabel: targetBatch ? targetBatch.weekLabel : 'Semana Atual',
       isPaidImmediately: isPaid,
       paymentStatus: isPaid ? 'paid' : 'pending',
-      paymentDate: isPaid ? new Date().toISOString() : undefined,
+      paymentDate: isPaid ? nowIso : undefined,
       paymentMethod: isPaid ? paymentMethod : 'fiado',
       registeredBy: currentUser.name,
       notes: saleNotes.trim(),
@@ -253,7 +260,6 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       batches: updatedBatches,
     };
 
-    saveState(newState);
     onStateChange(newState);
 
     // Reset form
@@ -272,10 +278,11 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     if (!sale) return;
 
     if (window.confirm(`Cancelar a venda de ${sale.quantity}x ${sale.sweetName} para ${sale.buyerName}?`)) {
+      const nowIso = new Date().toISOString();
       const updatedSales = state.sales.filter((s) => s.id !== saleId);
       const updatedBatches = state.batches.map((b) => {
         if (b.id === sale.batchId) {
-          return { ...b, totalSold: Math.max(0, b.totalSold - sale.quantity) };
+          return { ...b, totalSold: Math.max(0, b.totalSold - sale.quantity), updatedAt: nowIso };
         }
         return b;
       });
@@ -286,7 +293,6 @@ export const SalesPage: React.FC<SalesPageProps> = ({
         batches: updatedBatches,
       };
 
-      saveState(newState);
       onStateChange(newState);
     }
   };
@@ -304,6 +310,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     e.preventDefault();
     if (!editingSale) return;
 
+    const nowIso = new Date().toISOString();
     const newQty = Math.max(1, editQuantity);
     const qtyDiff = newQty - editingSale.quantity;
     const newUnitPrice = editUnitPrice;
@@ -319,7 +326,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           totalPrice: newTotalPrice,
           paymentStatus: editStatus,
           isPaidImmediately: isNowPaid,
-          paymentDate: isNowPaid ? (s.paymentDate || new Date().toISOString()) : undefined,
+          paymentDate: isNowPaid ? (s.paymentDate || nowIso) : undefined,
+          updatedAt: nowIso,
         };
       }
       return s;
@@ -330,6 +338,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
         return {
           ...b,
           totalSold: Math.max(0, b.totalSold + qtyDiff),
+          updatedAt: nowIso,
         };
       }
       return b;
@@ -341,7 +350,6 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       batches: updatedBatches,
     };
 
-    saveState(newState);
     onStateChange(newState);
     setEditingSale(null);
     alert(`🎉 Venda para ${editingSale.buyerName} alterada para ${newQty}x ${editingSale.sweetName} (Total: ${formatCurrency(newTotalPrice)})!`);
@@ -358,7 +366,6 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     }
     const updated = [...state.departments, name];
     onStateChange({ ...state, departments: updated });
-    saveState({ ...state, departments: updated });
     setNewDeptInput('');
   };
 
@@ -366,7 +373,6 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     if (window.confirm(`Deseja remover a repartição "${deptToDelete}"?`)) {
       const updated = state.departments.filter((d) => d !== deptToDelete);
       onStateChange({ ...state, departments: updated });
-      saveState({ ...state, departments: updated });
     }
   };
 
