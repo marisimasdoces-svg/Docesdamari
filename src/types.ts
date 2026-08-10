@@ -18,6 +18,8 @@ export interface Buyer {
   phone?: string;
   notes?: string;
   createdAt: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface SweetItem {
@@ -28,6 +30,8 @@ export interface SweetItem {
   recipeId?: string;
   active: boolean;
   category?: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface ProductionBatch {
@@ -43,6 +47,8 @@ export interface ProductionBatch {
   notes?: string;
   status: 'active' | 'closed';
   createdAt: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface Sale {
@@ -67,6 +73,8 @@ export interface Sale {
   notes?: string;
   isRetroactive?: boolean;
   estimatedUnitCost?: number;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface PaymentRecord {
@@ -79,6 +87,8 @@ export interface PaymentRecord {
   paymentMethod: 'pix' | 'dinheiro';
   notes?: string;
   registeredBy: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface InventoryItem {
@@ -95,6 +105,8 @@ export interface InventoryItem {
   minAlertQuantity?: number;
   supplier?: string;
   brand?: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface RecipeIngredient {
@@ -118,6 +130,7 @@ export interface Recipe {
   waterCleaningCost?: number;
   calculatedUnitCost: number; // total recipe cost / yieldsCount
   updatedAt: string;
+  deletedAt?: string;
 }
 
 export interface BatchExpense {
@@ -129,6 +142,8 @@ export interface BatchExpense {
   totalCost: number;
   monthKey: string;
   notes?: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 export interface AppState {
@@ -143,4 +158,6 @@ export interface AppState {
   recipes: Recipe[];
   expenses: BatchExpense[];
   departments: string[];
+  tombstones?: Record<string, string>; // { [entityId]: ISO_Timestamp_When_Deleted }
+  lastUpdated?: string;
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppState, User } from './types';
-import { getStoredState, saveState, getCurrentMonthKey, initFirebaseSync, fetchCloudState } from './lib/storage';
+import { getStoredState, saveState, getCurrentMonthKey, initFirebaseSync, fetchCloudState, subscribeState } from './lib/storage';
 import { SplashOpening } from './components/SplashOpening';
 import { LoginPage } from './components/LoginPage';
 import { Navigation, TabType } from './components/Navigation';
@@ -18,6 +18,14 @@ export default function App() {
 
   // Keep state synchronized with local storage & Firebase real-time cloud database
   useEffect(() => {
+    // Subscribe to internal state changes (e.g. storage listeners)
+    const unsubscribeStorage = subscribeState((updatedState) => {
+      setAppState((prev) => ({
+        ...updatedState,
+        currentUser: prev.currentUser || updatedState.currentUser,
+      }));
+    });
+
     // Proactively fetch latest cloud state on startup
     fetchCloudState().then((remoteState) => {
       if (remoteState) {
@@ -52,6 +60,7 @@ export default function App() {
     window.addEventListener('visibilitychange', handleFocus);
 
     return () => {
+      unsubscribeStorage();
       unsubscribeFirebase();
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('visibilitychange', handleFocus);

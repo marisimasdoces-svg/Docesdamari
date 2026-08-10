@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import {
   Home,
@@ -14,8 +14,19 @@ import {
   Calendar,
   Smartphone,
   Sparkles,
+  WifiOff,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
-import { exportDatabaseJSON, importDatabaseJSON, resetToInitialData, forceSyncCloud } from '../lib/storage';
+import {
+  exportDatabaseJSON,
+  importDatabaseJSON,
+  resetToInitialData,
+  forceSyncCloud,
+  getSyncStatus,
+  subscribeSyncStatus,
+  SyncStatus,
+} from '../lib/storage';
 
 import appIconImg from '../assets/images/mari_simas_app_icon_1785897100847.jpg';
 import goldLogoImg from '../assets/images/mari_simas_logo_1785897108954.jpg';
@@ -45,6 +56,12 @@ export const Navigation: React.FC<NavigationProps> = ({
   const [showIconModal, setShowIconModal] = useState(false);
   const [importJsonText, setImportJsonText] = useState('');
   const [dbMsg, setDbMsg] = useState('');
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(getSyncStatus());
+
+  useEffect(() => {
+    const unsub = subscribeSyncStatus((st) => setSyncStatus(st));
+    return () => unsub();
+  }, []);
 
   const handleExport = () => {
     const jsonStr = exportDatabaseJSON();
@@ -167,11 +184,35 @@ export const Navigation: React.FC<NavigationProps> = ({
                   alert('☁️ Dados sincronizados com a nuvem! Celular e PC atualizados.');
                 }
               }}
-              className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200 transition-all cursor-pointer hover:scale-105 active:scale-95 flex items-center gap-1.5"
+              className={`px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer hover:scale-105 active:scale-95 flex items-center gap-1.5 text-xs font-bold ${
+                syncStatus === 'synced'
+                  ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                  : syncStatus === 'syncing'
+                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
+                  : syncStatus === 'offline'
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                  : 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200'
+              }`}
               title="Sincronizar Celular e Computador (Nuvem em Tempo Real)"
             >
-              <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
-              <span className="hidden sm:inline text-xs font-bold text-emerald-800">Sincronizar</span>
+              {syncStatus === 'syncing' ? (
+                <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+              ) : syncStatus === 'offline' ? (
+                <WifiOff className="w-3.5 h-3.5 text-slate-600" />
+              ) : syncStatus === 'error' ? (
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              )}
+              <span className="hidden sm:inline">
+                {syncStatus === 'synced'
+                  ? 'Sincronizado'
+                  : syncStatus === 'syncing'
+                  ? 'Sincronizando...'
+                  : syncStatus === 'offline'
+                  ? 'Offline'
+                  : 'Erro Sinc'}
+              </span>
             </button>
 
             {/* DB Backup Modal Button */}
@@ -277,18 +318,56 @@ export const Navigation: React.FC<NavigationProps> = ({
             )}
 
             {/* Firebase Cloud Sync Status */}
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold shrink-0 text-sm shadow-xs animate-pulse">
+            <div
+              className={`p-3 rounded-2xl flex items-center gap-3 border ${
+                syncStatus === 'synced'
+                  ? 'bg-emerald-50 border-emerald-200'
+                  : syncStatus === 'syncing'
+                  ? 'bg-amber-50 border-amber-200'
+                  : syncStatus === 'offline'
+                  ? 'bg-slate-100 border-slate-200'
+                  : 'bg-rose-50 border-rose-200'
+              }`}
+            >
+              <div
+                className={`w-8 h-8 rounded-full text-white flex items-center justify-center font-bold shrink-0 text-sm shadow-xs ${
+                  syncStatus === 'synced'
+                    ? 'bg-emerald-500'
+                    : syncStatus === 'syncing'
+                    ? 'bg-amber-500 animate-pulse'
+                    : syncStatus === 'offline'
+                    ? 'bg-slate-500'
+                    : 'bg-rose-500'
+                }`}
+              >
                 ☁️
               </div>
               <div className="text-left text-xs">
-                <div className="font-extrabold text-emerald-950 flex items-center gap-1.5">
-                  <span>Sincronização em Nuvem Ativa</span>
-                  <span className="bg-emerald-200 text-emerald-900 text-[10px] px-1.5 py-0.5 rounded-full font-black">
-                    ONLINE
+                <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                  <span>
+                    {syncStatus === 'synced'
+                      ? 'Sincronização em Nuvem Ativa'
+                      : syncStatus === 'syncing'
+                      ? 'Sincronizando com a Nuvem...'
+                      : syncStatus === 'offline'
+                      ? 'Modo Offline — Salvo Localmente'
+                      : 'Erro de Sincronização'}
+                  </span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-black ${
+                      syncStatus === 'synced'
+                        ? 'bg-emerald-200 text-emerald-900'
+                        : syncStatus === 'syncing'
+                        ? 'bg-amber-200 text-amber-900'
+                        : syncStatus === 'offline'
+                        ? 'bg-slate-200 text-slate-800'
+                        : 'bg-rose-200 text-rose-900'
+                    }`}
+                  >
+                    {syncStatus.toUpperCase()}
                   </span>
                 </div>
-                <div className="text-emerald-800 text-[11px] font-medium">
+                <div className="text-slate-600 text-[11px] font-medium">
                   Projeto Firebase: <code className="font-mono font-bold">docesdamari-e34b7</code>
                 </div>
               </div>
