@@ -14,6 +14,7 @@ import { Navigation, TabType } from './components/Navigation';
 import { HomeDashboard } from './components/HomeDashboard';
 import { FeaturePanel } from './components/FeaturePanel';
 import { Boxes, ShoppingBag, ReceiptText, WalletCards } from 'lucide-react';
+import { signOutFromFirebase, waitForFirebaseAuth } from './lib/firebase';
 
 const SalesPage = lazy(() => import('./components/SalesPage').then((module) => ({ default: module.SalesPage })));
 const BillingPage = lazy(() => import('./components/BillingPage').then((module) => ({ default: module.BillingPage })));
@@ -63,37 +64,43 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthKey());
 
-  // One Firestore subscription is the source of truth on every device.
+  // Firestore starts only after Firebase has restored an authenticated user.
   useEffect(() => {
-    fetchCloudState().then((remoteState) => {
-      if (remoteState) {
-        setAppState((prev) => ({
-          ...stripDeletedRecords(remoteState),
-          currentUser: prev.currentUser || remoteState.currentUser,
-        }));
-      }
-    });
+    if (!appState.currentUser) return;
 
-    // Subscribe to Firebase Firestore live updates
-    const unsubscribeFirebase = initFirebaseSync((remoteState) => {
+    let disposed = false;
+    let unsubscribeFirebase: (() => void) | null = null;
+
+    const applyRemoteState = (remoteState: AppState) => {
+      if (disposed) return;
       setAppState((prev) => ({
         ...stripDeletedRecords(remoteState),
         currentUser: prev.currentUser || remoteState.currentUser,
       }));
-    });
+    };
+
+    const startFirebase = async () => {
+      const firebaseUser = await waitForFirebaseAuth();
+      if (disposed || !firebaseUser) return;
+
+      const remoteState = await fetchCloudState();
+      if (remoteState) applyRemoteState(remoteState);
+
+      unsubscribeFirebase = initFirebaseSync(applyRemoteState);
+    };
+
+    void startFirebase();
 
     // Refresh state when window gains focus (e.g., returning to PC tab)
     const handleFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') {
         return;
       }
-      fetchCloudState().then((remoteState) => {
-        if (remoteState) {
-          setAppState((prev) => ({
-            ...stripDeletedRecords(remoteState),
-            currentUser: prev.currentUser || remoteState.currentUser,
-          }));
-        }
+      void waitForFirebaseAuth().then((firebaseUser) => {
+        if (!firebaseUser || disposed) return;
+        return fetchCloudState().then((remoteState) => {
+          if (remoteState) applyRemoteState(remoteState);
+        });
       });
     };
 
@@ -101,11 +108,12 @@ export default function App() {
     window.addEventListener('visibilitychange', handleFocus);
 
     return () => {
-      unsubscribeFirebase();
+      disposed = true;
+      unsubscribeFirebase?.();
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('visibilitychange', handleFocus);
     };
-  }, []);
+  }, [appState.currentUser?.id]);
 
   const handleStateChange = (newState: AppState) => {
     // Save tombstones before hiding deleted records from the interface.
@@ -128,7 +136,10 @@ export default function App() {
     setView('main');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await signOutFromFirebase().catch((error) => {
+      console.warn('Firebase sign-out failed:', error);
+    });
     const newState: AppState = {
       ...appState,
       currentUser: null,

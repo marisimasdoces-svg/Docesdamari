@@ -1,5 +1,12 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
+  browserLocalPersistence,
+  getAuth,
+  setPersistence,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth';
+import {
   getFirestore,
   initializeFirestore,
   persistentLocalCache,
@@ -31,6 +38,24 @@ export const firebaseConfig = {
 
 // Initialize Firebase App
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+
+// Firebase Authentication is the gate used by the permanent Firestore rules.
+// Passwords are never stored in the application bundle.
+export const auth = getAuth(app);
+
+export async function signInToFirebase(email: string, password: string) {
+  await setPersistence(auth, browserLocalPersistence);
+  return signInWithEmailAndPassword(auth, email, password);
+}
+
+export async function signOutFromFirebase(): Promise<void> {
+  await signOut(auth);
+}
+
+export async function waitForFirebaseAuth() {
+  await auth.authStateReady();
+  return auth.currentUser;
+}
 
 // Initialize Firestore Database with persistent multi-tab offline cache and ignoreUndefinedProperties
 let firestoreDb;

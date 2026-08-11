@@ -18,7 +18,7 @@ const CURRENT_USER_KEY = 'marisimas_current_user_v1';
 const LISTENERS: Array<(state: AppState) => void> = [];
 
 export type SyncStatus = 'synced' | 'syncing' | 'offline' | 'error';
-let currentSyncStatus: SyncStatus = navigator.onLine ? 'synced' : 'offline';
+let currentSyncStatus: SyncStatus = navigator.onLine ? 'syncing' : 'offline';
 const SYNC_STATUS_LISTENERS: Array<(status: SyncStatus) => void> = [];
 
 export function getSyncStatus(): SyncStatus {
@@ -493,6 +493,8 @@ export async function fetchCloudState(): Promise<AppState | null> {
     const state = buildAppStateFromCollections();
     inMemoryAppState = state;
     notifyListeners(state);
+    const hasCachedCollection = Object.values(collectionFromCacheMap).some(Boolean);
+    notifySyncStatus(!navigator.onLine ? 'offline' : hasCachedCollection ? 'syncing' : 'synced');
     return state;
   } catch (err) {
     console.warn('Could not refresh cloud state:', err);
@@ -515,10 +517,13 @@ export function isFirebaseConnected(): boolean {
 }
 
 export async function forceSyncCloud(): Promise<boolean> {
+  if (!navigator.onLine) {
+    notifySyncStatus('offline');
+    return false;
+  }
   notifySyncStatus('syncing');
   try {
     await waitForPendingWrites(db);
-    notifySyncStatus(navigator.onLine ? 'synced' : 'offline');
     return true;
   } catch (err) {
     console.error('Error waiting for pending writes:', err);

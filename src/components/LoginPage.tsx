@@ -3,6 +3,7 @@ import { User } from '../types';
 import { Lock, User as UserIcon, ArrowRight, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 import appIconImg from '../assets/images/doces-da-mari-logo.png';
+import { signInToFirebase } from '../lib/firebase';
 
 interface LoginPageProps {
   users: User[];
@@ -12,30 +13,40 @@ interface LoginPageProps {
 
 export const LoginPage: React.FC<LoginPageProps> = ({ users, onLoginSuccess, onBackToSplash }) => {
   const [username, setUsername] = useState('DAMERSIMAS');
-  const [password, setPassword] = useState('Damer1986@');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
     const cleanUsername = username.trim().toUpperCase();
     const cleanPassword = password.trim();
 
-    if (cleanUsername === 'DAMERSIMAS' && cleanPassword === 'Damer1986@') {
-      const u = users.find((item) => item.username === 'DAMERSIMAS') || users[0];
-      onLoginSuccess(u);
+    const accountByUsername: Record<string, string> = {
+      DAMERSIMAS: 'marcosdamersimas@gmail.com',
+      MARISIMAS: 'mdamerso@hotmail.com',
+    };
+    const email = accountByUsername[cleanUsername];
+    const localUser = users.find((item) => item.username === cleanUsername);
+
+    if (!email || !localUser || !cleanPassword) {
+      setErrorMsg('Usuário ou senha incorretos.');
       return;
     }
 
-    if (cleanUsername === 'MARISIMAS' && cleanPassword === '15032011') {
-      const u = users.find((item) => item.username === 'MARISIMAS') || users[1];
-      onLoginSuccess(u);
-      return;
+    setIsSubmitting(true);
+    try {
+      await signInToFirebase(email, cleanPassword);
+      onLoginSuccess(localUser);
+    } catch (error) {
+      console.warn('Firebase authentication failed:', error);
+      setErrorMsg('Usuário ou senha incorretos.');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setErrorMsg('Usuário ou senha incorretos.');
   };
 
   return (
@@ -117,9 +128,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ users, onLoginSuccess, onB
 
           <button
             type="submit"
-            className="w-full mt-2 py-3 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-sm shadow-md shadow-purple-200 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            disabled={isSubmitting}
+            className="w-full mt-2 py-3 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:cursor-wait disabled:opacity-70 text-white font-bold text-sm shadow-md shadow-purple-200 flex items-center justify-center gap-2 transition-all cursor-pointer"
           >
-            <span>ENTRAR</span>
+            <span>{isSubmitting ? 'CONECTANDO…' : 'ENTRAR'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
