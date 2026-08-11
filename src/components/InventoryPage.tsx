@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { AppState, InventoryItem, ProductionBatch, Recipe, RecipeIngredient, User } from '../types';
-import { formatCurrency } from '../lib/storage';
+import { AppState, InventoryItem, ProductionBatch, Recipe, RecipeIngredient, User, UtilitySettings } from '../types';
+import { formatCurrency, formatMonthShort, getSaoPauloDateKey } from '../lib/storage';
 import {
   Package,
   Trash2,
@@ -49,6 +49,11 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   onStateChange,
   selectedMonth,
 }) => {
+  const selectedMonthDate = new Date(`${selectedMonth || '2026-08'}-01T12:00:00`);
+  selectedMonthDate.setMonth(selectedMonthDate.getMonth() - 1);
+  const utilityReferenceMonth = `${selectedMonthDate.getFullYear()}-${String(selectedMonthDate.getMonth() + 1).padStart(2, '0')}`;
+  const savedUtilitySettings = state.utilitySettings?.find((item) => item.referenceMonth === utilityReferenceMonth);
+
   // MODAL STATES (CARDS FLUTUANTES)
   const [showAddInsumoModal, setShowAddInsumoModal] = useState(false);
   const [showStockListModal, setShowStockListModal] = useState(false);
@@ -81,9 +86,33 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   // UTILIDADES (GÁS, LUZ, ÁGUA)
   const [stoveGasMinutesStr, setStoveGasMinutesStr] = useState<string>('25');
   const [electricOvenMinutesStr, setElectricOvenMinutesStr] = useState<string>('40');
-  const [waterCleaningCostStr, setWaterCleaningCostStr] = useState<string>('1,00');
-  const [gasCylinderPriceStr, setGasCylinderPriceStr] = useState<string>('115,00');
-  const [kwhPriceStr, setKwhPriceStr] = useState<string>('0,90');
+  const [waterCleaningCostStr, setWaterCleaningCostStr] = useState<string>(() => {
+    const perProduction = savedUtilitySettings
+      ? savedUtilitySettings.waterBill / Math.max(1, savedUtilitySettings.productionCycles)
+      : 1;
+    return perProduction.toFixed(2).replace('.', ',');
+  });
+  const [gasCylinderPriceStr, setGasCylinderPriceStr] = useState<string>(() =>
+    String(savedUtilitySettings?.gasCylinderPrice ?? 115).replace('.', ',')
+  );
+  const [kwhPriceStr, setKwhPriceStr] = useState<string>(() => {
+    const rate = savedUtilitySettings
+      ? savedUtilitySettings.electricityBill / Math.max(1, savedUtilitySettings.electricityKwh)
+      : 0.9;
+    return rate.toFixed(4).replace('.', ',');
+  });
+  const [electricityBillStr, setElectricityBillStr] = useState<string>(() =>
+    String(savedUtilitySettings?.electricityBill ?? 180).replace('.', ',')
+  );
+  const [electricityKwhStr, setElectricityKwhStr] = useState<string>(() =>
+    String(savedUtilitySettings?.electricityKwh ?? 200).replace('.', ',')
+  );
+  const [waterBillStr, setWaterBillStr] = useState<string>(() =>
+    String(savedUtilitySettings?.waterBill ?? 80).replace('.', ',')
+  );
+  const [productionCyclesStr, setProductionCyclesStr] = useState<string>(() =>
+    String(savedUtilitySettings?.productionCycles ?? 20)
+  );
   const [showUtilityRates, setShowUtilityRates] = useState<boolean>(false);
   const [useManualUtilityCost, setUseManualUtilityCost] = useState<boolean>(false);
   const [manualRecipeIndirectCostStr, setManualRecipeIndirectCostStr] = useState<string>('3,50');
@@ -124,7 +153,10 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const handleDeleteInsumo = (id: string) => {
-    const updatedInventory = state.inventory.filter((i) => i.id !== id);
+    const nowIso = new Date().toISOString();
+    const updatedInventory = state.inventory.map((item) =>
+      item.id === id ? { ...item, deletedAt: nowIso, updatedAt: nowIso } : item
+    );
     const newState: AppState = {
       ...state,
       inventory: updatedInventory,
@@ -165,7 +197,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
   const handleAddIngredientRow = () => {
     if (state.inventory.length === 0) {
-      alert('Atenção: Adicione primeiro insumos no Estoque para poder selecioná-los na receita!');
+      alert('Atenção: adicione primeiro os insumos no Depósito para selecioná-los na receita.');
       setShowAddInsumoModal(true);
       return;
     }
@@ -227,6 +259,59 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const manualFinalPrice = parseFormattedNumber(manualFinalPriceStr);
   const estimatedProfitPerUnit = manualFinalPrice - calculatedUnitCost;
 
+  const handleSaveUtilityRates = () => {
+    const nowIso = new Date().toISOString();
+    const electricityBill = parseFormattedNumber(electricityBillStr);
+    const electricityKwh = Math.max(1, parseFormattedNumber(electricityKwhStr));
+    const waterBill = parseFormattedNumber(waterBillStr);
+    const productionCycles = Math.max(1, parseFormattedNumber(productionCyclesStr));
+    const gasCylinderPrice = parseFormattedNumber(gasCylinderPriceStr);
+    const setting: UtilitySettings = {
+      id: `utilities-${utilityReferenceMonth}`,
+      referenceMonth: utilityReferenceMonth,
+      gasCylinderPrice,
+      electricityBill,
+      electricityKwh,
+      waterBill,
+      productionCycles,
+      updatedAt: nowIso,
+    };
+    const alreadyExists = state.utilitySettings?.some((item) => item.id === setting.id);
+    const utilitySettings = alreadyExists
+      ? state.utilitySettings.map((item) => item.id === setting.id ? setting : item)
+      : [setting, ...(state.utilitySettings || [])];
+
+    setKwhPriceStr((electricityBill / electricityKwh).toFixed(4).replace('.', ','));
+    setWaterCleaningCostStr((waterBill / productionCycles).toFixed(2).replace('.', ','));
+    onStateChange({ ...state, utilitySettings });
+    setShowUtilityRates(false);
+    alert('✅ Contas do mês anterior salvas. Luz e água já entraram no cálculo desta receita.');
+  };
+
+  const consumeInventoryForRecipe = (recipe: Recipe, producedQuantity: number, nowIso: string): InventoryItem[] | null => {
+    const factor = producedQuantity / Math.max(1, recipe.yieldsCount);
+    const usage = new Map<string, number>();
+    recipe.ingredients.forEach((ingredient) => {
+      usage.set(
+        ingredient.inventoryItemId,
+        (usage.get(ingredient.inventoryItemId) || 0) + ingredient.quantityUsed * factor
+      );
+    });
+    const shortages = state.inventory
+      .filter((item) => (usage.get(item.id) || 0) > item.remainingQuantity)
+      .map((item) => `${item.name}: precisa ${(usage.get(item.id) || 0).toFixed(2)} ${item.unit}, há ${item.remainingQuantity.toFixed(2)} ${item.unit}`);
+    if (shortages.length) {
+      alert(`Não há quantidade suficiente no Depósito:\n\n${shortages.join('\n')}\n\nRegistre a compra antes de confirmar a produção.`);
+      return null;
+    }
+    return state.inventory.map((item) => {
+      const used = usage.get(item.id) || 0;
+      return used > 0
+        ? { ...item, remainingQuantity: Math.max(0, item.remainingQuantity - used), updatedAt: nowIso }
+        : item;
+    });
+  };
+
   // SUBMIT CADASTRO COMPRA (ESTOQUE)
   const handleAddInsumo = (e: React.FormEvent) => {
     e.preventDefault();
@@ -274,7 +359,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     setItemCostStr('');
     setItemQtyStr('1');
     setShowAddInsumoModal(false);
-    alert('✅ Compra registrada no Estoque!');
+    alert('✅ Compra registrada no Depósito!');
   };
 
   // SUBMIT NOVA RECEITA
@@ -285,7 +370,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       return;
     }
     if (recipeIngredients.length === 0) {
-      alert('Adicione pelo menos um ingrediente do Estoque na receita!');
+      alert('Adicione pelo menos um ingrediente do Depósito na receita!');
       return;
     }
 
@@ -343,33 +428,17 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
           },
         ];
 
-    const newBatch: ProductionBatch = {
-      id: `batch-${Date.now()}`,
-      sweetId: targetSweetId,
-      sweetName: recipeSweetName.trim(),
-      totalProduced: yieldsCount,
-      totalSold: 0,
-      unitPrice: manualFinalPrice,
-      startDate: nowIso.slice(0, 10),
-      endDate: nowIso.slice(0, 10),
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      weekLabel: `Semana ${new Date().toLocaleDateString('pt-BR')}`,
-      status: 'active',
-    };
-
     const newState: AppState = {
       ...state,
       recipes: [newRecipe, ...state.recipes],
       sweets: updatedSweets,
-      batches: [newBatch, ...state.batches],
     };
 
     onStateChange(newState);
 
     setRecipeSweetName('');
     setShowNewRecipeModal(false);
-    alert(`🎉 Receita de "${recipeSweetName}" salva e registrada no Painel com ${yieldsCount} potes produzidos hoje!`);
+    alert(`🎉 Receita de "${recipeSweetName}" salva no Livro de Receitas. O estoque só será baixado quando você confirmar uma produção.`);
   };
 
   const handleRegisterTodayProduction = (recipe: Recipe) => {
@@ -385,6 +454,8 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     }
 
     const nowIso = new Date().toISOString();
+    const updatedInventory = consumeInventoryForRecipe(recipe, qty, nowIso);
+    if (!updatedInventory) return;
 
     const registeredSweet = state.sweets.find(
       (s) => s.name.toLowerCase() === recipe.sweetName.toLowerCase() || s.recipeId === recipe.id
@@ -397,11 +468,11 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       totalProduced: qty,
       totalSold: 0,
       unitPrice: registeredSweet ? registeredSweet.price : 13.0,
-      startDate: nowIso.slice(0, 10),
-      endDate: nowIso.slice(0, 10),
+      startDate: getSaoPauloDateKey(),
+      endDate: getSaoPauloDateKey(),
       createdAt: nowIso,
       updatedAt: nowIso,
-      weekLabel: `Semana ${new Date().toLocaleDateString('pt-BR')}`,
+      weekLabel: `Semana ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
       status: 'active',
     };
 
@@ -413,10 +484,11 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       ...state,
       recipes: updatedRecipes,
       batches: [newBatch, ...state.batches],
+      inventory: updatedInventory,
     };
 
     onStateChange(newState);
-    alert(`✅ Produção de ${qty} potes de "${recipe.sweetName}" registrada para hoje! A quantidade já aparece no Painel Roxo!`);
+    alert(`✅ Produção de ${qty} potes de "${recipe.sweetName}" registrada. Os ingredientes foram baixados do Depósito automaticamente.`);
   };
 
   // Low stock alert items
@@ -438,7 +510,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
           <span>Módulo de Produção</span>
         </div>
         <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-          Gestão de Estoque & Livro de Receitas
+          Depósito & Livro de Receitas
         </h2>
         <p className="text-xs sm:text-sm text-slate-500 font-medium">
           Acesse os cadastros flutuantes sem poluição na tela. Lançamentos via cards práticos!
@@ -460,15 +532,15 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 </span>
               ) : (
                 <span className="bg-emerald-100 text-emerald-800 text-xs px-3 py-1 rounded-full font-bold border border-emerald-200">
-                  ✓ Estoque em ordem
+                  ✓ Depósito em ordem
                 </span>
               )}
             </div>
 
             <div>
-              <h3 className="text-xl font-black text-slate-900">Estoque</h3>
+              <h3 className="text-xl font-black text-slate-900">Depósito</h3>
               <p className="text-xs text-slate-500 font-medium mt-1">
-                Cadastre novas compras de insumos (com calculadora de bolacha embutida) e gerencie as quantidades em estoque.
+                Registre cada compra, a quantidade e o valor pago. O custo médio fica disponível no Livro de Receitas.
               </p>
             </div>
           </div>
@@ -491,7 +563,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
               className="px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-2xl shadow-md cursor-pointer transition-all flex items-center justify-center gap-2 active:scale-95"
             >
               <Package className="w-4 h-4 text-amber-400" />
-              <span>Ver Produtos em Estoque ({state.inventory.length})</span>
+              <span>Ver Produtos no Depósito ({state.inventory.length})</span>
             </button>
           </div>
         </div>
@@ -736,7 +808,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
               <div className="flex items-center gap-2">
                 <Package className="w-5 h-5 text-amber-600" />
                 <h3 className="text-xl font-black text-slate-900">
-                  Produtos em Estoque ({state.inventory.length})
+                  Produtos no Depósito ({state.inventory.length})
                 </h3>
               </div>
               <button
@@ -755,7 +827,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 type="text"
                 value={stockSearchTerm}
                 onChange={(e) => setStockSearchTerm(e.target.value)}
-                placeholder="Buscar insumo no estoque..."
+                placeholder="Buscar produto no depósito..."
                 className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:outline-none focus:border-amber-600"
               />
             </div>
@@ -908,7 +980,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
                   <label className="font-bold text-slate-900 uppercase text-[11px] flex items-center gap-1.5">
                     <Layers className="w-4 h-4 text-purple-600" />
-                    Ingredientes do Estoque Utilizados:
+                    Ingredientes puxados do Depósito:
                   </label>
 
                   <button
@@ -1044,7 +1116,43 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                       Gás, Luz e Água (Tempo de Preparo)
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowUtilityRates((value) => !value)}
+                    className="text-[10px] font-bold text-purple-700 bg-white border border-purple-200 hover:bg-purple-50 rounded-lg px-2.5 py-1.5 cursor-pointer flex items-center gap-1"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    {showUtilityRates ? 'Fechar contas' : 'Calibrar contas do mês anterior'}
+                  </button>
                 </div>
+
+                {showUtilityRates && (
+                  <div className="bg-white border border-purple-200 rounded-xl p-3 space-y-3">
+                    <div className="text-[11px] text-slate-600 leading-relaxed">
+                      Use as contas de <strong>{formatMonthShort(utilityReferenceMonth)}</strong>. O sistema calcula o preço do kWh e divide a água pela quantidade de produções do mês.
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                      <label className="text-[10px] font-bold text-slate-600">Botijão de gás (R$)
+                        <input value={gasCylinderPriceStr} onChange={(event) => setGasCylinderPriceStr(event.target.value)} className="mt-1 w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-900" />
+                      </label>
+                      <label className="text-[10px] font-bold text-slate-600">Conta de luz (R$)
+                        <input value={electricityBillStr} onChange={(event) => setElectricityBillStr(event.target.value)} className="mt-1 w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-900" />
+                      </label>
+                      <label className="text-[10px] font-bold text-slate-600">Consumo da luz (kWh)
+                        <input value={electricityKwhStr} onChange={(event) => setElectricityKwhStr(event.target.value)} className="mt-1 w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-900" />
+                      </label>
+                      <label className="text-[10px] font-bold text-slate-600">Conta de água (R$)
+                        <input value={waterBillStr} onChange={(event) => setWaterBillStr(event.target.value)} className="mt-1 w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-900" />
+                      </label>
+                      <label className="text-[10px] font-bold text-slate-600">Produções no mês
+                        <input value={productionCyclesStr} onChange={(event) => setProductionCyclesStr(event.target.value)} className="mt-1 w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-900" />
+                      </label>
+                    </div>
+                    <button type="button" onClick={handleSaveUtilityRates} className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black cursor-pointer">
+                      Salvar contas e aplicar à receita
+                    </button>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>

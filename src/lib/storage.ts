@@ -1,17 +1,25 @@
-import { AppState } from '../types';
+import { AppState, User } from '../types';
 import { INITIAL_STATE } from '../data/initialData';
-import { APP_STATE_DOC_REF, db, onSnapshot, setDoc, getDoc, runTransaction } from './firebase';
+import { mergeAppStates, recordTimestamp, stripDeletedRecords } from './syncState';
+import {
+  APP_STATE_DOC_REF,
+  db,
+  collection,
+  doc,
+  onSnapshot,
+  setDoc,
+  getDoc,
+  getDocs,
+  deleteField,
+  waitForPendingWrites,
+} from './firebase';
 
-const STORAGE_KEY = 'marisimas_doces_app_v1';
+const CURRENT_USER_KEY = 'marisimas_current_user_v1';
 const LISTENERS: Array<(state: AppState) => void> = [];
 
 export type SyncStatus = 'synced' | 'syncing' | 'offline' | 'error';
 let currentSyncStatus: SyncStatus = navigator.onLine ? 'synced' : 'offline';
 const SYNC_STATUS_LISTENERS: Array<(status: SyncStatus) => void> = [];
-
-let isApplyingRemoteUpdate = false;
-let isSavingToFirebase = false;
-let isSyncPending = false;
 
 export function getSyncStatus(): SyncStatus {
   return currentSyncStatus;
@@ -30,477 +38,476 @@ function notifySyncStatus(status: SyncStatus): void {
   SYNC_STATUS_LISTENERS.forEach((cb) => cb(status));
 }
 
-// Window online/offline listener setup
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     notifySyncStatus('syncing');
-    syncToFirebase();
   });
   window.addEventListener('offline', () => {
     notifySyncStatus('offline');
   });
 }
 
-/**
- * Extracts or infers an ISO timestamp for any entity item.
- */
-function getItemTimestamp(item: any): string {
-  if (!item || typeof item !== 'object') return '2026-01-01T00:00:00.000Z';
-  if (item.updatedAt) return item.updatedAt;
-  if (item.deletedAt) return item.deletedAt;
-  if (item.createdAt) return item.createdAt;
-  if (item.saleDate) return item.saleDate;
-  if (item.paymentDate) return item.paymentDate;
-  if (item.purchaseDate) return item.purchaseDate;
-  if (item.date) return item.date;
-  if (item.startDate) return item.startDate;
-  return '2026-01-01T00:00:00.000Z';
+function logFirestoreWriteError(collectionName: string, id: string, error: any, payload: any) {
+  notifySyncStatus('error');
+  console.error(
+    `FIRESTORE WRITE FAILED\ncollection: ${collectionName}\nid: ${id}\nerror.code: ${error?.code || 'unknown'}\nerror.message: ${error?.message || error}\npayload:`,
+    payload
+  );
 }
 
-/**
- * Merges tombstones local and remote preserving max(timestampLocal, timestampRemote) for each key.
- */
-export function mergeTombstones(
-  localTombstones: Record<string, string> = {},
-  remoteTombstones: Record<string, string> = {}
-): Record<string, string> {
-  const merged: Record<string, string> = {};
-  const allKeys = new Set([
-    ...Object.keys(localTombstones || {}),
-    ...Object.keys(remoteTombstones || {}),
-  ]);
+export function removeUndefinedDeep(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
 
-  allKeys.forEach((key) => {
-    const localTs = localTombstones[key] || '';
-    const remoteTs = remoteTombstones[key] || '';
-    const maxTs = remoteTs > localTs ? remoteTs : localTs;
-    if (maxTs) {
-      merged[key] = maxTs;
+  // Preserve arrays
+  if (Array.isArray(obj)) {
+    return obj.map((item) => removeUndefinedDeep(item));
+  }
+
+  // Preserve FieldValue sentinels (e.g. deleteField(), serverTimestamp(), etc.)
+  if (obj.constructor && obj.constructor.name !== 'Object') {
+    return obj;
+  }
+
+  const cleaned: Record<string, any> = {};
+  for (const key of Object.keys(obj)) {
+    const value = obj[key];
+    if (value !== undefined) {
+      cleaned[key] = removeUndefinedDeep(value);
     }
-  });
-
-  return merged;
+  }
+  return cleaned;
 }
 
-/**
- * Merges two entity arrays using deterministic timestamp comparison and tombstone resolution.
- */
-function mergeEntitiesById<T extends { id: string; updatedAt?: string; deletedAt?: string; paymentStatus?: string; isPaidImmediately?: boolean }>(
-  entityType: string,
-  arrLocal: T[] = [],
-  arrRemote: T[] = [],
-  tombstones: Record<string, string> = {}
-): T[] {
-  const localMap = new Map<string, T>();
-  const remoteMap = new Map<string, T>();
+function getStoredCurrentUser(): User | null {
+  try {
+    const raw = localStorage.getItem(CURRENT_USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
-  (arrLocal || []).forEach((item) => {
-    if (item && item.id) localMap.set(item.id, item);
-  });
-  (arrRemote || []).forEach((item) => {
-    if (item && item.id) remoteMap.set(item.id, item);
-  });
+function setStoredCurrentUser(user: User | null): void {
+  try {
+    if (user) {
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(CURRENT_USER_KEY);
+    }
+  } catch (err) {
+    console.error('Error saving current user:', err);
+  }
+}
 
-  const allIds = new Set<string>([
-    ...Array.from(localMap.keys()),
-    ...Array.from(remoteMap.keys()),
-  ]);
+let inMemoryAppState: AppState = {
+  ...INITIAL_STATE,
+  currentUser: getStoredCurrentUser(),
+};
 
-  const activeMerged: T[] = [];
+export { mergeAppStates, stripDeletedRecords } from './syncState';
 
-  allIds.forEach((id) => {
-    const localItem = localMap.get(id);
-    const remoteItem = remoteMap.get(id);
+function isItemEqual(a: any, b: any): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
 
-    const localTs = localItem ? getItemTimestamp(localItem) : '';
-    const remoteTs = remoteItem ? getItemTimestamp(remoteItem) : '';
+let migrationPromise: Promise<void> | null = null;
 
-    // Check tombstone with typed key first (entityType:id), fallback to raw id for legacy compatibility
-    const tombstoneTs = tombstones[`${entityType}:${id}`] || tombstones[id] || '';
+export async function runMigrationIfNeeded(): Promise<void> {
+  if (migrationPromise) return migrationPromise;
 
-    // Determine candidate item with newest timestamp
-    let winnerItem: T | undefined;
-    let winnerTs = '';
+  migrationPromise = (async () => {
+    const migrationRef = doc(db, 'system', 'migration');
+    const migrationSnap = await getDoc(migrationRef);
 
-    if (localItem && remoteItem) {
-      if (remoteTs > localTs) {
-        winnerItem = { ...remoteItem };
-        winnerTs = remoteTs;
-      } else if (localTs > remoteTs) {
-        winnerItem = { ...localItem };
-        winnerTs = localTs;
-      } else {
-        // Equal timestamps: merge fields non-destructively
-        const isPaid = remoteItem.paymentStatus === 'paid' || remoteItem.isPaidImmediately || localItem.paymentStatus === 'paid' || localItem.isPaidImmediately;
-        winnerItem = {
-          ...localItem,
-          ...remoteItem,
-          paymentStatus: isPaid ? 'paid' : (remoteItem.paymentStatus || localItem.paymentStatus),
-          isPaidImmediately: isPaid ? true : (remoteItem.isPaidImmediately ?? localItem.isPaidImmediately),
-        };
-        winnerTs = localTs || remoteTs;
+    if (migrationSnap.exists() && (migrationSnap.data()?.version || 0) >= 2) {
+      return;
+    }
+
+    console.log('Running safe Firestore collection migration (version 2)...');
+
+    let legacyState: Partial<AppState> | null = null;
+    try {
+      const legacySnap = await getDoc(APP_STATE_DOC_REF);
+      if (legacySnap.exists()) {
+        legacyState = legacySnap.data() as Partial<AppState>;
       }
-    } else if (localItem) {
-      winnerItem = localItem;
-      winnerTs = localTs;
-    } else if (remoteItem) {
-      winnerItem = remoteItem;
-      winnerTs = remoteTs;
+    } catch (err) {
+      console.warn('Could not read legacy app_data/main doc:', err);
     }
 
-    // Check if item was deleted via tombstone
-    if (tombstoneTs && tombstoneTs >= winnerTs) {
-      return; // Skip deleted item
-    }
-
-    if (winnerItem) {
-      activeMerged.push({
-        ...winnerItem,
-        updatedAt: winnerTs || new Date().toISOString(),
-      });
-    }
-  });
-
-  return activeMerged;
-}
-
-function cleanFictitiousData(state: AppState): AppState {
-  const cleanSales = (state.sales || []).filter(
-    (s) => s.id !== 'sale-1' && s.id !== 'sale-2' && s.notes !== 'Venda presencial (1 doce)'
-  );
-  const cleanPayments = (state.payments || []).filter(
-    (p) => p.id !== 'pay-1' && p.id !== 'pay-2' && p.notes !== 'Quitação da venda presencial'
-  );
-  return {
-    ...state,
-    sales: cleanSales,
-    payments: cleanPayments,
-  };
-}
-
-/**
- * Detects deleted items between old state and new state and updates the tombstones map with entity-scoped keys.
- */
-function detectAndRecordTombstones(oldState: AppState, newState: AppState): Record<string, string> {
-  const tombstones: Record<string, string> = mergeTombstones(
-    oldState.tombstones || {},
-    newState.tombstones || {}
-  );
-
-  const nowIso = new Date().toISOString();
-
-  const checkArrayDeletions = (entityType: string, oldArr: any[] = [], newArr: any[] = []) => {
-    const newSet = new Set((newArr || []).map((x) => x && x.id).filter(Boolean));
-    (oldArr || []).forEach((oldItem) => {
-      if (oldItem && oldItem.id && !newSet.has(oldItem.id)) {
-        const key = `${entityType}:${oldItem.id}`;
-        if (!tombstones[key]) {
-          tombstones[key] = nowIso;
+    if (!legacyState || (!legacyState.sales?.length && !legacyState.buyers?.length)) {
+      try {
+        const rawLocal = localStorage.getItem('marisimas_doces_app_v1');
+        if (rawLocal) {
+          legacyState = JSON.parse(rawLocal);
         }
+      } catch (e) {
+        console.warn('Could not read legacy localStorage:', e);
       }
+    }
+
+    const sourceData: AppState = {
+      ...INITIAL_STATE,
+      ...legacyState,
+      users: legacyState?.users?.length ? legacyState.users : INITIAL_STATE.users,
+      departments: legacyState?.departments?.length ? legacyState.departments : INITIAL_STATE.departments,
+      sweets: legacyState?.sweets?.length ? legacyState.sweets : INITIAL_STATE.sweets,
+      batches: legacyState?.batches?.length ? legacyState.batches : INITIAL_STATE.batches,
+      inventory: legacyState?.inventory?.length ? legacyState.inventory : INITIAL_STATE.inventory,
+      recipes: legacyState?.recipes?.length ? legacyState.recipes : INITIAL_STATE.recipes,
+      buyers: legacyState?.buyers || [],
+      sales: legacyState?.sales || [],
+      payments: legacyState?.payments || [],
+      expenses: legacyState?.expenses || [],
+      utilitySettings: legacyState?.utilitySettings || [],
+    };
+
+    const migrateCollection = async (
+      collectionName: string,
+      items: any[],
+      getId: (item: any) => string,
+      mapItem?: (item: any) => any
+    ) => {
+      const writePromises: Promise<void>[] = [];
+      for (const item of items) {
+        if (!item) continue;
+        const itemId = getId(item);
+        if (!itemId) continue;
+        const payload = mapItem ? mapItem(item) : item;
+        const safePayload = removeUndefinedDeep(payload);
+        const itemRef = doc(db, collectionName, itemId);
+        writePromises.push(
+          setDoc(itemRef, safePayload, { merge: true }).catch((err) => {
+            logFirestoreWriteError(collectionName, itemId, err, safePayload);
+            throw err;
+          })
+        );
+      }
+      await Promise.all(writePromises);
+    };
+
+    await migrateCollection('users', sourceData.users, (u) => u.id);
+    await migrateCollection(
+      'departments',
+      sourceData.departments,
+      (d) => (typeof d === 'string' ? d : d.id),
+      (d) => (typeof d === 'string' ? { id: d, name: d } : d)
+    );
+    await migrateCollection('sweets', sourceData.sweets, (s) => s.id);
+    await migrateCollection('batches', sourceData.batches, (b) => b.id);
+    await migrateCollection('buyers', sourceData.buyers, (b) => b.id);
+    await migrateCollection('sales', sourceData.sales, (s) => s.id);
+    await migrateCollection('payments', sourceData.payments, (p) => p.id);
+    await migrateCollection('inventory', sourceData.inventory, (i) => i.id);
+    await migrateCollection('recipes', sourceData.recipes, (r) => r.id);
+    await migrateCollection('expenses', sourceData.expenses, (e) => e.id);
+    await migrateCollection('utilitySettings', sourceData.utilitySettings, (item) => item.id);
+
+    // Record migration flag ONLY after all collections succeeded
+    await setDoc(migrationRef, {
+      version: 2,
+      migratedAt: new Date().toISOString(),
     });
-  };
 
-  checkArrayDeletions('sales', oldState.sales, newState.sales);
-  checkArrayDeletions('buyers', oldState.buyers, newState.buyers);
-  checkArrayDeletions('payments', oldState.payments, newState.payments);
-  checkArrayDeletions('batches', oldState.batches, newState.batches);
-  checkArrayDeletions('inventory', oldState.inventory, newState.inventory);
-  checkArrayDeletions('recipes', oldState.recipes, newState.recipes);
-  checkArrayDeletions('expenses', oldState.expenses, newState.expenses);
-  checkArrayDeletions('sweets', oldState.sweets, newState.sweets);
+    console.log('Safe Firestore collection migration completed successfully!');
+  })().catch((err) => {
+    migrationPromise = null; // Allow future retry on failure
+    console.error('Error during Firestore migration:', err);
+    throw err;
+  });
 
-  return tombstones;
+  return migrationPromise;
 }
 
-/**
- * Ensures all entity items have an updatedAt field.
- */
-function ensureItemTimestamps(state: AppState): AppState {
-  const tagArray = <T extends { id: string; updatedAt?: string }>(arr: T[] = []): T[] => {
-    return (arr || []).map((item) => {
-      if (!item) return item;
-      return {
-        ...item,
-        updatedAt: item.updatedAt || getItemTimestamp(item),
-      };
-    });
-  };
+type CollectionKey =
+  | 'buyers'
+  | 'sweets'
+  | 'batches'
+  | 'sales'
+  | 'payments'
+  | 'inventory'
+  | 'recipes'
+  | 'expenses'
+  | 'utilitySettings'
+  | 'users'
+  | 'departments';
+
+const COLLECTIONS: CollectionKey[] = [
+  'buyers',
+  'sweets',
+  'batches',
+  'sales',
+  'payments',
+  'inventory',
+  'recipes',
+  'expenses',
+  'utilitySettings',
+  'users',
+  'departments',
+];
+
+const collectionDataMap: Record<string, any[]> = {
+  buyers: [],
+  sweets: [],
+  batches: [],
+  sales: [],
+  payments: [],
+  inventory: [],
+  recipes: [],
+  expenses: [],
+  utilitySettings: [],
+  users: [],
+  departments: [],
+};
+
+const collectionPendingMap: Record<string, boolean> = {};
+const collectionReadyMap: Record<string, boolean> = {};
+const collectionFromCacheMap: Record<string, boolean> = {};
+
+function buildAppStateFromCollections(): AppState {
+  const users = collectionDataMap.users.length ? collectionDataMap.users : INITIAL_STATE.users;
+
+  const departments = collectionDataMap.departments
+    .filter((d: any) => !d?.deletedAt)
+    .map((d: any) => (typeof d === 'string' ? d : d.name || d.id));
+  const finalDepts = departments.length ? departments : INITIAL_STATE.departments;
 
   return {
-    ...state,
-    sales: tagArray(state.sales),
-    buyers: tagArray(state.buyers),
-    payments: tagArray(state.payments),
-    batches: tagArray(state.batches),
-    inventory: tagArray(state.inventory),
-    recipes: tagArray(state.recipes),
-    expenses: tagArray(state.expenses),
-    sweets: tagArray(state.sweets),
+    users,
+    currentUser: getStoredCurrentUser(),
+    departments: finalDepts,
+    buyers: collectionDataMap.buyers || [],
+    sweets: collectionDataMap.sweets || [],
+    batches: collectionDataMap.batches || [],
+    sales: collectionDataMap.sales || [],
+    payments: collectionDataMap.payments || [],
+    inventory: collectionDataMap.inventory || [],
+    recipes: collectionDataMap.recipes || [],
+    expenses: collectionDataMap.expenses || [],
+    utilitySettings: collectionDataMap.utilitySettings || [],
   };
 }
 
-function mergeWithDefaults(parsed: Partial<AppState>, currentLocal?: Partial<AppState>): AppState {
-  const mergedTombstones = mergeTombstones(
-    currentLocal?.tombstones || {},
-    parsed?.tombstones || {}
-  );
+export function initFirebaseSync(onRemoteUpdate: (state: AppState) => void): () => void {
+  let destroyed = false;
+  const unsubscribes: Array<() => void> = [];
 
-  const mergedSales = mergeEntitiesById('sales', currentLocal?.sales || [], parsed?.sales || [], mergedTombstones);
-  const mergedBuyers = mergeEntitiesById('buyers', currentLocal?.buyers || [], parsed?.buyers || [], mergedTombstones);
-  const mergedPayments = mergeEntitiesById('payments', currentLocal?.payments || [], parsed?.payments || [], mergedTombstones);
-  const mergedBatches = mergeEntitiesById('batches', currentLocal?.batches || [], parsed?.batches || [], mergedTombstones);
-  const mergedExpenses = mergeEntitiesById('expenses', currentLocal?.expenses || [], parsed?.expenses || [], mergedTombstones);
-  const mergedInventory = mergeEntitiesById('inventory', currentLocal?.inventory || [], parsed?.inventory || [], mergedTombstones);
-  const mergedRecipes = mergeEntitiesById('recipes', currentLocal?.recipes || [], parsed?.recipes || [], mergedTombstones);
-  const mergedSweets = mergeEntitiesById('sweets', currentLocal?.sweets || [], parsed?.sweets || [], mergedTombstones);
-
-  const mergedDepts = Array.from(
-    new Set([
-      ...(INITIAL_STATE.departments || []),
-      ...(parsed?.departments || []),
-      ...(currentLocal?.departments || []),
-    ])
-  );
-
-  // Dynamically calculate totalSold for batches based on active sales
-  const batchSoldMap = new Map<string, number>();
-  mergedSales.forEach((s) => {
-    if (s.batchId) {
-      batchSoldMap.set(s.batchId, (batchSoldMap.get(s.batchId) || 0) + (s.quantity || 1));
+  (async () => {
+    try {
+      await runMigrationIfNeeded();
+    } catch (err) {
+      console.error('Migration failed before starting listeners:', err);
+      // Starting offline must not disable real-time sync for the whole
+      // session. Listeners use the local Firestore cache now and reconnect
+      // automatically when the device regains internet access.
+      notifySyncStatus(navigator.onLine ? 'error' : 'offline');
     }
-  });
 
-  const updatedBatches = mergedBatches.map((b) => {
-    const soldFromSales = batchSoldMap.get(b.id);
-    if (soldFromSales !== undefined) {
-      return { ...b, totalSold: Math.max(b.totalSold || 0, soldFromSales) };
-    }
-    return b;
-  });
+    if (destroyed) return;
 
-  const merged: AppState = {
-    ...INITIAL_STATE,
-    ...currentLocal,
-    ...parsed,
-    users: parsed?.users?.length ? parsed.users : (currentLocal?.users?.length ? currentLocal.users : INITIAL_STATE.users),
-    departments: mergedDepts,
-    buyers: mergedBuyers,
-    sweets: mergedSweets.length ? mergedSweets : INITIAL_STATE.sweets,
-    batches: updatedBatches.length ? updatedBatches : INITIAL_STATE.batches,
-    sales: mergedSales,
-    payments: mergedPayments,
-    inventory: mergedInventory.length ? mergedInventory : INITIAL_STATE.inventory,
-    recipes: mergedRecipes.length ? mergedRecipes : INITIAL_STATE.recipes,
-    expenses: mergedExpenses,
-    tombstones: mergedTombstones,
-    lastUpdated: new Date().toISOString(),
+    COLLECTIONS.forEach((colName) => {
+      collectionReadyMap[colName] = false;
+      try {
+        const colRef = collection(db, colName);
+        const unsub = onSnapshot(
+          colRef,
+          { includeMetadataChanges: true },
+          (snapshot) => {
+            if (destroyed) return;
+            const items = snapshot.docs.map((docSnap) => {
+              const data = docSnap.data();
+              return { ...data, id: data.id || docSnap.id };
+            });
+            collectionDataMap[colName] = items;
+            collectionPendingMap[colName] = snapshot.metadata.hasPendingWrites;
+            collectionFromCacheMap[colName] = snapshot.metadata.fromCache;
+            collectionReadyMap[colName] = true;
+
+            const hasPending = Object.values(collectionPendingMap).some(Boolean);
+            const allCollectionsReady = COLLECTIONS.every((name) => collectionReadyMap[name]);
+            const hasCachedCollection = Object.values(collectionFromCacheMap).some(Boolean);
+
+            if (!navigator.onLine) {
+              notifySyncStatus('offline');
+            } else if (!allCollectionsReady || hasPending || hasCachedCollection) {
+              notifySyncStatus('syncing');
+            } else {
+              notifySyncStatus('synced');
+            }
+
+            // Never expose a partially loaded database. Partial arrays were
+            // the main source of cross-device records being overwritten.
+            if (!allCollectionsReady) return;
+
+            const state = buildAppStateFromCollections();
+            inMemoryAppState = state;
+            notifyListeners(state);
+            onRemoteUpdate(state);
+          },
+          (error) => {
+            console.warn(`Firestore listener error on ${colName}:`, error.message);
+            notifySyncStatus(navigator.onLine ? 'error' : 'offline');
+          }
+        );
+        unsubscribes.push(unsub);
+      } catch (err) {
+        console.error(`Failed to attach listener for ${colName}:`, err);
+      }
+    });
+  })();
+
+  return () => {
+    destroyed = true;
+    unsubscribes.forEach((unsub) => unsub());
   };
-
-  return cleanFictitiousData(ensureItemTimestamps(merged));
 }
 
 export function getStoredState(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return ensureItemTimestamps(INITIAL_STATE);
-    }
-    const parsed = JSON.parse(raw);
-    return mergeWithDefaults(parsed);
-  } catch (err) {
-    console.error('Error reading state from localStorage:', err);
-    return ensureItemTimestamps(INITIAL_STATE);
-  }
+  return stripDeletedRecords({
+    ...inMemoryAppState,
+    currentUser: getStoredCurrentUser() || inMemoryAppState.currentUser,
+  });
 }
 
-export function saveState(state: AppState, skipFirebaseSync = false): void {
+export function saveState(state: AppState, options: { replace?: boolean } = {}): void {
   try {
-    const currentState = getStoredState();
-    const tombstones = detectAndRecordTombstones(currentState, state);
+    setStoredCurrentUser(state.currentUser);
+    notifySyncStatus(navigator.onLine ? 'syncing' : 'offline');
+    const baseState = inMemoryAppState;
+    const deletionTimestamp = new Date().toISOString();
 
-    const stateWithTombstones: AppState = {
-      ...state,
-      tombstones,
-      lastUpdated: new Date().toISOString(),
+    const syncEntityCollection = <T extends { id: string }>(
+      colName: string,
+      newArr: T[] = [],
+      oldArr: T[] = []
+    ) => {
+      const oldMap = new Map((oldArr || []).map((item) => [item.id, item]));
+      const newMap = new Map((newArr || []).map((item) => [item.id, item]));
+
+      newArr.forEach((newItem) => {
+        if (!newItem || !newItem.id) return;
+        const oldItem = oldMap.get(newItem.id);
+        const newTime = recordTimestamp(newItem as Record<string, unknown>);
+        const oldTime = recordTimestamp(oldItem as Record<string, unknown> | undefined);
+
+        // Never let an outdated offline copy revive or overwrite a newer
+        // record received from another device.
+        if (oldItem && (oldItem as any).deletedAt && !(newItem as any).deletedAt && oldTime >= newTime) {
+          return;
+        }
+        if (oldItem && oldTime > newTime && !options.replace) {
+          return;
+        }
+        if (!oldItem || !isItemEqual(newItem, oldItem)) {
+          const payload: Record<string, any> = { ...newItem };
+
+          if (oldItem) {
+            Object.keys(oldItem).forEach((key) => {
+              if (newItem[key as keyof T] === undefined) {
+                payload[key] = deleteField();
+              }
+            });
+          }
+
+          if (colName === 'sales' && (newItem as any).paymentStatus === 'pending' && !(newItem as any).paymentDate) {
+            payload.paymentDate = deleteField();
+          }
+
+          const safePayload = removeUndefinedDeep(payload);
+
+          setDoc(doc(db, colName, newItem.id), safePayload, { merge: true }).catch((err) => {
+            logFirestoreWriteError(colName, newItem.id, err, safePayload);
+          });
+        }
+      });
+
+      // Missing records are intentionally ignored during normal saves. A form
+      // may have been opened before another device created a new record. Only
+      // an explicit replacement/import is allowed to tombstone missing data.
+      if (options.replace) {
+        oldArr.forEach((oldItem) => {
+          if (!oldItem || !oldItem.id || newMap.has(oldItem.id)) return;
+          const tombstone = removeUndefinedDeep({
+            ...oldItem,
+            deletedAt: deletionTimestamp,
+            updatedAt: deletionTimestamp,
+          });
+          setDoc(doc(db, colName, oldItem.id), tombstone, { merge: true }).catch((err) => {
+            logFirestoreWriteError(colName, oldItem.id, err, tombstone);
+          });
+        });
+      }
     };
 
-    const cleaned = cleanFictitiousData(ensureItemTimestamps(stateWithTombstones));
+    syncEntityCollection('sales', state.sales, baseState.sales);
+    syncEntityCollection('buyers', state.buyers, baseState.buyers);
+    syncEntityCollection('payments', state.payments, baseState.payments);
+    syncEntityCollection('batches', state.batches, baseState.batches);
+    syncEntityCollection('inventory', state.inventory, baseState.inventory);
+    syncEntityCollection('recipes', state.recipes, baseState.recipes);
+    syncEntityCollection('expenses', state.expenses, baseState.expenses);
+    syncEntityCollection('utilitySettings', state.utilitySettings, baseState.utilitySettings);
+    syncEntityCollection('sweets', state.sweets, baseState.sweets);
+    syncEntityCollection('users', state.users, baseState.users);
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
-    notifyListeners(cleaned);
+    const oldDepts = new Set(baseState.departments || []);
+    const newDepts = new Set(state.departments || []);
 
-    if (!skipFirebaseSync && !isApplyingRemoteUpdate) {
-      syncToFirebase();
-    }
-  } catch (err) {
-    console.error('Error saving state to localStorage:', err);
-  }
-}
-
-function hasLocalChangesNeedingUpload(localState: Partial<AppState>, remoteState: Partial<AppState>): boolean {
-  if (!localState) return false;
-  if (!remoteState) return true;
-
-  const entityKeys: (keyof AppState)[] = ['sales', 'buyers', 'payments', 'batches', 'inventory', 'recipes', 'expenses', 'sweets'];
-
-  for (const key of entityKeys) {
-    const localArr = (localState[key] as any[]) || [];
-    const remoteArr = (remoteState[key] as any[]) || [];
-    const remoteMap = new Map(remoteArr.map((item) => [item.id, item]));
-
-    for (const localItem of localArr) {
-      if (!localItem || !localItem.id) continue;
-      const remoteItem = remoteMap.get(localItem.id);
-      if (!remoteItem) {
-        return true; // Local item missing in remote
+    newDepts.forEach((dept) => {
+      if (!oldDepts.has(dept)) {
+        const payload = { id: dept, name: dept };
+        const safePayload = removeUndefinedDeep(payload);
+        setDoc(doc(db, 'departments', dept), safePayload, { merge: true }).catch((err) => {
+          logFirestoreWriteError('departments', dept, err, safePayload);
+        });
       }
-      const localTs = getItemTimestamp(localItem);
-      const remoteTs = getItemTimestamp(remoteItem);
-      if (localTs > remoteTs) {
-        return true; // Local item newer than remote
-      }
-    }
-  }
-
-  // Check tombstones
-  const localTombstones = localState.tombstones || {};
-  const remoteTombstones = remoteState.tombstones || {};
-  for (const k of Object.keys(localTombstones)) {
-    if (!remoteTombstones[k] || localTombstones[k] > remoteTombstones[k]) {
-      return true; // Local tombstone newer or missing in remote
-    }
-  }
-
-  return false;
-}
-
-export async function syncToFirebase(): Promise<void> {
-  if (isSavingToFirebase) {
-    isSyncPending = true;
-    return;
-  }
-  if (!navigator.onLine) {
-    notifySyncStatus('offline');
-    return;
-  }
-
-  try {
-    isSavingToFirebase = true;
-    notifySyncStatus('syncing');
-
-    let finalState: AppState = getStoredState();
-
-    // Use Firestore runTransaction for atomic read-merge-write
-    await runTransaction(db, async (transaction) => {
-      const localStateForTxn = getStoredState();
-      const docSnap = await transaction.get(APP_STATE_DOC_REF);
-      let remoteData: Partial<AppState> = {};
-      if (docSnap.exists()) {
-        remoteData = docSnap.data() as Partial<AppState>;
-      }
-      finalState = mergeWithDefaults(remoteData, localStateForTxn);
-      transaction.set(APP_STATE_DOC_REF, finalState);
     });
 
-    // Protect local state from race conditions if local edits happened during transaction
-    const latestLocalState = getStoredState();
-    const safeFinalState = mergeWithDefaults(finalState, latestLocalState);
-
-    // Update local storage and listeners with safe merged state
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeFinalState));
-    notifyListeners(safeFinalState);
-    notifySyncStatus('synced');
+    inMemoryAppState = {
+      ...(options.replace ? state : mergeAppStates(baseState, state)),
+      currentUser: getStoredCurrentUser(),
+    };
+    notifyListeners(inMemoryAppState);
   } catch (err) {
-    console.warn('Firebase Firestore transaction sync failed (offline or error):', err);
-    notifySyncStatus(navigator.onLine ? 'error' : 'offline');
-  } finally {
-    isSavingToFirebase = false;
-    if (isSyncPending) {
-      isSyncPending = false;
-      // Re-trigger sync using the latest local state
-      syncToFirebase();
-    }
+    console.error('Error in saveState:', err);
   }
 }
 
 export async function fetchCloudState(): Promise<AppState | null> {
-  if (!navigator.onLine) {
-    notifySyncStatus('offline');
+  try {
+    await runMigrationIfNeeded();
+    await Promise.all(
+      COLLECTIONS.map(async (colName) => {
+        const snapshot = await getDocs(collection(db, colName));
+        collectionDataMap[colName] = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data();
+          return { ...data, id: data.id || docSnap.id };
+        });
+        collectionReadyMap[colName] = true;
+        collectionPendingMap[colName] = snapshot.metadata.hasPendingWrites;
+        collectionFromCacheMap[colName] = snapshot.metadata.fromCache;
+      })
+    );
+    const state = buildAppStateFromCollections();
+    inMemoryAppState = state;
+    notifyListeners(state);
+    return state;
+  } catch (err) {
+    console.warn('Could not refresh cloud state:', err);
+    notifySyncStatus(navigator.onLine ? 'error' : 'offline');
     return getStoredState();
   }
-
-  try {
-    notifySyncStatus('syncing');
-    const docSnap = await getDoc(APP_STATE_DOC_REF);
-    if (docSnap.exists()) {
-      const remoteData = docSnap.data() as Partial<AppState>;
-      if (remoteData && typeof remoteData === 'object') {
-        const localRaw = localStorage.getItem(STORAGE_KEY);
-        const localParsed = localRaw ? JSON.parse(localRaw) : {};
-        const remoteMerged = mergeWithDefaults(remoteData, localParsed);
-
-        isApplyingRemoteUpdate = true;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteMerged));
-        notifyListeners(remoteMerged);
-        isApplyingRemoteUpdate = false;
-        notifySyncStatus('synced');
-
-        // ONLY push back to Firebase if local state has newer data or tombstones not yet in remote
-        if (hasLocalChangesNeedingUpload(localParsed, remoteData)) {
-          syncToFirebase();
-        }
-
-        return remoteMerged;
-      }
-    }
-  } catch (err) {
-    console.warn('Failed to fetch state directly from Firestore:', err);
-    notifySyncStatus('offline');
-  }
-  return null;
 }
 
-export function initFirebaseSync(onRemoteUpdate: (state: AppState) => void): () => void {
-  try {
-    const unsubscribe = onSnapshot(
-      APP_STATE_DOC_REF,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const remoteData = docSnap.data() as Partial<AppState>;
-          if (remoteData && typeof remoteData === 'object') {
-            isApplyingRemoteUpdate = true;
-
-            const localRaw = localStorage.getItem(STORAGE_KEY);
-            const localParsed = localRaw ? JSON.parse(localRaw) : {};
-            const remoteMerged = mergeWithDefaults(remoteData, localParsed);
-
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteMerged));
-            notifyListeners(remoteMerged);
-            onRemoteUpdate(remoteMerged);
-            notifySyncStatus('synced');
-
-            isApplyingRemoteUpdate = false;
-          }
-        } else {
-          // First time initialization in Firebase: push local state to cloud if local state has data
-          const currentState = getStoredState();
-          if (currentState.sales.length > 0 || currentState.buyers.length > 0) {
-            syncToFirebase();
-          }
-        }
-      },
-      (error) => {
-        console.warn('Firestore subscription status:', error.message);
-        notifySyncStatus(navigator.onLine ? 'error' : 'offline');
-      }
-    );
-    return unsubscribe;
-  } catch (err) {
-    console.error('Failed to initialize Firebase snapshot listener:', err);
-    notifySyncStatus('offline');
-    return () => {};
-  }
+export function deleteDepartmentFromCloud(department: string): void {
+  const timestamp = new Date().toISOString();
+  const tombstone = { id: department, name: department, deletedAt: timestamp, updatedAt: timestamp };
+  notifySyncStatus(navigator.onLine ? 'syncing' : 'offline');
+  setDoc(doc(db, 'departments', department), tombstone, { merge: true }).catch((err) => {
+    logFirestoreWriteError('departments', department, err, tombstone);
+  });
 }
 
 export function isFirebaseConnected(): boolean {
@@ -508,12 +515,13 @@ export function isFirebaseConnected(): boolean {
 }
 
 export async function forceSyncCloud(): Promise<boolean> {
+  notifySyncStatus('syncing');
   try {
-    notifySyncStatus('syncing');
-    await syncToFirebase();
+    await waitForPendingWrites(db);
+    notifySyncStatus(navigator.onLine ? 'synced' : 'offline');
     return true;
   } catch (err) {
-    console.error('Force sync failed:', err);
+    console.error('Error waiting for pending writes:', err);
     notifySyncStatus(navigator.onLine ? 'error' : 'offline');
     return false;
   }
@@ -532,20 +540,19 @@ function notifyListeners(state: AppState): void {
 }
 
 export function resetToInitialData(): AppState {
-  saveState(INITIAL_STATE);
+  saveState(INITIAL_STATE, { replace: true });
   return INITIAL_STATE;
 }
 
 export function exportDatabaseJSON(): string {
-  const currentState = getStoredState();
-  return JSON.stringify(currentState, null, 2);
+  return JSON.stringify(getStoredState(), null, 2);
 }
 
 export function importDatabaseJSON(jsonStr: string): boolean {
   try {
     const parsed = JSON.parse(jsonStr);
     if (parsed && typeof parsed === 'object' && Array.isArray(parsed.buyers)) {
-      saveState(parsed);
+      saveState(parsed, { replace: true });
       return true;
     }
     return false;
@@ -555,10 +562,17 @@ export function importDatabaseJSON(jsonStr: string): boolean {
   }
 }
 
+export function getSaoPauloDateKey(date = new Date()): string {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 export function getCurrentMonthKey(date = new Date()): string {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  return `${yyyy}-${mm}`;
+  return getSaoPauloDateKey(date).slice(0, 7);
 }
 
 export function formatCurrency(amount: number): string {
@@ -573,7 +587,7 @@ export function formatDateBR(dateString: string): string {
   try {
     const d = new Date(dateString);
     if (isNaN(d.getTime())) return dateString;
-    return d.toLocaleDateString('pt-BR');
+    return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   } catch {
     return dateString;
   }

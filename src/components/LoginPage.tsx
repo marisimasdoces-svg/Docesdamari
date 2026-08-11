@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { User } from '../types';
 import { Lock, User as UserIcon, ArrowRight, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
-import appIconImg from '../assets/images/mari_simas_app_icon_1785897100847.jpg';
-import goldLogoImg from '../assets/images/mari_simas_logo_1785897108954.jpg';
+import appIconImg from '../assets/images/doces-da-mari-logo.png';
 
 interface LoginPageProps {
   users: User[];
@@ -51,14 +50,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ users, onLoginSuccess, onB
           <div className="w-20 h-20 rounded-3xl overflow-hidden border-2 border-amber-400 shadow-xl mx-auto bg-purple-950">
             <img
               src={appIconImg}
-              alt="Ícone Mari Simas Doces"
+              alt="Ícone Doces da Mari"
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover"
             />
           </div>
           <div className="space-y-1">
             <h2 className="font-brand text-3xl sm:text-4xl text-gold-shimmer font-bold tracking-wide">
-              Mari Simas Doces
+              Doces da Mari
             </h2>
             <p className="text-xs text-slate-500 font-medium">
               Acesso ao Sistema de Gestão

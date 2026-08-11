@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppState, Sale, User } from '../types';
-import { formatCurrency } from '../lib/storage';
+import { deleteDepartmentFromCloud, formatCurrency, formatDateBR, getSaoPauloDateKey } from '../lib/storage';
 import {
   ShoppingBag,
   Plus,
@@ -219,8 +219,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({
         totalProduced,
         totalSold: quantity,
         unitPrice,
-        startDate: nowIso.slice(0, 10),
-        endDate: nowIso.slice(0, 10),
+        startDate: getSaoPauloDateKey(),
+        endDate: getSaoPauloDateKey(),
         createdAt: nowIso,
         updatedAt: nowIso,
         weekLabel: 'Semana Atual',
@@ -279,7 +279,9 @@ export const SalesPage: React.FC<SalesPageProps> = ({
 
     if (window.confirm(`Cancelar a venda de ${sale.quantity}x ${sale.sweetName} para ${sale.buyerName}?`)) {
       const nowIso = new Date().toISOString();
-      const updatedSales = state.sales.filter((s) => s.id !== saleId);
+      const updatedSales = state.sales.map((item) =>
+        item.id === saleId ? { ...item, deletedAt: nowIso, updatedAt: nowIso } : item
+      );
       const updatedBatches = state.batches.map((b) => {
         if (b.id === sale.batchId) {
           return { ...b, totalSold: Math.max(0, b.totalSold - sale.quantity), updatedAt: nowIso };
@@ -372,6 +374,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   const handleDeleteDept = (deptToDelete: string) => {
     if (window.confirm(`Deseja remover a repartição "${deptToDelete}"?`)) {
       const updated = state.departments.filter((d) => d !== deptToDelete);
+      deleteDepartmentFromCloud(deptToDelete);
       onStateChange({ ...state, departments: updated });
     }
   };
@@ -379,7 +382,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   // SEND WHATSAPP
   const handleSendWhatsApp = (sale: Sale) => {
     const phone = sale.buyerId ? state.buyers.find((b) => b.id === sale.buyerId)?.phone : '';
-    const text = `Olá ${sale.buyerName.split(' ')[0]}! Tudo bem? 🧁\n\nConfirmando sua compra de ${sale.quantity}x ${sale.sweetName} (*${formatCurrency(sale.totalPrice)}*).\n\nChave PIX para pagamento: marisimasdoces@gmail.com\nMuito obrigado! 🙏`;
+    const text = `Oi, ${sale.buyerName.split(' ')[0]}! Tudo bem? 🧁\n\nPassando com carinho para lembrar da sua compra de ${sale.quantity}x ${sale.sweetName}.\n\n*Valor: ${formatCurrency(sale.totalPrice)}*\n\nPIX (e-mail): mdamerso@hotmail.com\nFavorecida: Mariane Simas\n\nDepois é só mandar o comprovante por aqui. Muito obrigada! 💗`;
     const url = phone
       ? `https://wa.me/55${phone.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`
       : `https://wa.me/?text=${encodeURIComponent(text)}`;
@@ -808,7 +811,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
                       {filteredSales.map((sale) => (
                         <tr key={sale.id} className="hover:bg-purple-50/50 transition-colors">
                           <td className="py-3 px-3 font-mono text-slate-500 whitespace-nowrap">
-                            {new Date(sale.saleDate).toLocaleDateString('pt-BR')}
+                            {formatDateBR(sale.saleDate)}
                           </td>
                           <td className="py-3 px-3 font-bold text-slate-900 whitespace-nowrap">
                             {sale.buyerName}
@@ -906,7 +909,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
                       <tbody className="divide-y divide-gray-200">
                         {deptSales.map((s) => (
                           <tr key={s.id}>
-                            <td className="py-1">{new Date(s.saleDate).toLocaleDateString('pt-BR')}</td>
+                            <td className="py-1">{formatDateBR(s.saleDate)}</td>
                             <td className="py-1 font-bold">{s.buyerName}</td>
                             <td className="py-1">{s.sweetName}</td>
                             <td className="py-1 text-center">{s.quantity}</td>

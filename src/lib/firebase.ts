@@ -1,5 +1,22 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, onSnapshot, setDoc, getDoc, runTransaction } from 'firebase/firestore';
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  doc,
+  collection,
+  onSnapshot,
+  setDoc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  writeBatch,
+  serverTimestamp,
+  runTransaction,
+  deleteField,
+  waitForPendingWrites,
+} from 'firebase/firestore';
 
 export const firebaseConfig = {
   apiKey: "AIzaSyB12fYf5owS9E-WfC73Uqm5-LMRBag2IDc",
@@ -15,10 +32,36 @@ export const firebaseConfig = {
 // Initialize Firebase App
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firestore Database
-export const db = getFirestore(app);
+// Initialize Firestore Database with persistent multi-tab offline cache and ignoreUndefinedProperties
+let firestoreDb;
+try {
+  firestoreDb = initializeFirestore(app, {
+    ignoreUndefinedProperties: true,
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  });
+} catch (e) {
+  firestoreDb = getFirestore(app);
+}
 
-// Firestore document reference for storing the full application state
+export const db = firestoreDb;
+
+// Firestore document reference for the legacy single-document backup.
+// A document path must always contain collection/document pairs.
 export const APP_STATE_DOC_REF = doc(db, 'app_data', 'main');
 
-export { doc, onSnapshot, setDoc, getDoc, runTransaction };
+export {
+  doc,
+  collection,
+  onSnapshot,
+  setDoc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  writeBatch,
+  serverTimestamp,
+  runTransaction,
+  deleteField,
+  waitForPendingWrites,
+};

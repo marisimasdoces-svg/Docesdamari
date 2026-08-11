@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppState, Buyer, PaymentRecord, Sale, User } from '../types';
-import { formatCurrency, formatMonthShort } from '../lib/storage';
+import { formatCurrency, formatDateBR, formatMonthShort } from '../lib/storage';
 import confetti from 'canvas-confetti';
 import {
   Receipt,
@@ -205,14 +205,14 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         return sale;
       });
 
-      const updatedPayments = state.payments.filter(
-        (p) =>
-          !(
-            (p.buyerId === sum.buyer.id ||
-              p.buyerName.trim().toLowerCase() === sum.buyer.name.trim().toLowerCase()) &&
-            (!selectedMonth || p.monthKey === selectedMonth)
-          )
-      );
+      const updatedPayments = state.payments.map((payment) => {
+        const matchesBuyer = payment.buyerId === sum.buyer.id ||
+          payment.buyerName.trim().toLowerCase() === sum.buyer.name.trim().toLowerCase();
+        const matchesMonth = !selectedMonth || payment.monthKey === selectedMonth;
+        return matchesBuyer && matchesMonth
+          ? { ...payment, deletedAt: nowIso, updatedAt: nowIso }
+          : payment;
+      });
 
       const newState: AppState = {
         ...state,
@@ -245,24 +245,23 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         return b;
       });
 
-      const updatedSales = state.sales.filter(
-        (s) =>
-          !saleIdsToDelete.has(s.id) &&
-          !(
-            (s.buyerId === sum.buyer.id ||
-              s.buyerName.trim().toLowerCase() === sum.buyer.name.trim().toLowerCase()) &&
-            (!selectedMonth || s.monthKey === selectedMonth)
-          )
-      );
+      const updatedSales = state.sales.map((sale) => {
+        const matchesBuyer = sale.buyerId === sum.buyer.id ||
+          sale.buyerName.trim().toLowerCase() === sum.buyer.name.trim().toLowerCase();
+        const matchesMonth = !selectedMonth || sale.monthKey === selectedMonth;
+        return saleIdsToDelete.has(sale.id) || (matchesBuyer && matchesMonth)
+          ? { ...sale, deletedAt: nowIso, updatedAt: nowIso }
+          : sale;
+      });
 
-      const updatedPayments = state.payments.filter(
-        (p) =>
-          !(
-            (p.buyerId === sum.buyer.id ||
-              p.buyerName.trim().toLowerCase() === sum.buyer.name.trim().toLowerCase()) &&
-            (!selectedMonth || p.monthKey === selectedMonth)
-          )
-      );
+      const updatedPayments = state.payments.map((payment) => {
+        const matchesBuyer = payment.buyerId === sum.buyer.id ||
+          payment.buyerName.trim().toLowerCase() === sum.buyer.name.trim().toLowerCase();
+        const matchesMonth = !selectedMonth || payment.monthKey === selectedMonth;
+        return matchesBuyer && matchesMonth
+          ? { ...payment, deletedAt: nowIso, updatedAt: nowIso }
+          : payment;
+      });
 
       const newState: AppState = {
         ...state,
@@ -283,7 +282,9 @@ export const BillingPage: React.FC<BillingPageProps> = ({
 
     if (window.confirm(`Excluir a venda de ${sale.quantity}x ${sale.sweetName} para ${sale.buyerName}?`)) {
       const nowIso = new Date().toISOString();
-      const updatedSales = state.sales.filter((s) => s.id !== saleId);
+      const updatedSales = state.sales.map((item) =>
+        item.id === saleId ? { ...item, deletedAt: nowIso, updatedAt: nowIso } : item
+      );
       const updatedBatches = state.batches.map((b) => {
         if (b.id === sale.batchId) {
           return { ...b, totalSold: Math.max(0, b.totalSold - sale.quantity), updatedAt: nowIso };
@@ -305,7 +306,13 @@ export const BillingPage: React.FC<BillingPageProps> = ({
   // WhatsApp Message
   const handleWhatsAppBill = (sum: BuyerBillingSummary) => {
     const phone = sum.buyer.phone || (sum.salesList[0] ? state.buyers.find(b => b.id === sum.salesList[0].buyerId)?.phone : '');
-    const text = `Olá ${sum.buyer.name.split(' ')[0]}! Tudo bem? 🧁\n\nReferente às suas compras de doces no mês de ${formatMonthShort(selectedMonth)} (${sum.totalDoces} potes):\n\n*Valor pendente: ${formatCurrency(sum.pendingBalance)}*\n\nChave PIX para pagamento (E-mail):\nmdamerso@hotmail.com\n\nMuito obrigado! 🙏`;
+    const purchaseSummary = Array.from(
+      sum.salesList.reduce((items, sale) => {
+        items.set(sale.sweetName, (items.get(sale.sweetName) || 0) + sale.quantity);
+        return items;
+      }, new Map<string, number>())
+    ).map(([name, quantity]) => `${quantity}x ${name}`).join(', ');
+    const text = `Oi, ${sum.buyer.name.split(' ')[0]}! Tudo bem? 🧁\n\nPassando com carinho para lembrar dos seus Doces da Mari de ${formatMonthShort(selectedMonth)}.\n\n${purchaseSummary || `${sum.totalDoces} potes`}\n*Valor pendente: ${formatCurrency(sum.pendingBalance)}*\n\nPIX (e-mail): mdamerso@hotmail.com\nFavorecida: Mariane Simas\n\nDepois é só mandar o comprovante por aqui. Muito obrigada! 💗`;
     const encoded = encodeURIComponent(text);
     const url = phone
       ? `https://wa.me/55${phone.replace(/\D/g, '')}?text=${encoded}`
@@ -805,7 +812,7 @@ export const BillingPage: React.FC<BillingPageProps> = ({
                     <div>
                       <div className="font-bold text-slate-900">{sale.sweetName}</div>
                       <div className="text-[10px] text-slate-500">
-                        {sale.quantity}x a {formatCurrency(sale.unitPrice)} • Data: {new Date(sale.saleDate).toLocaleDateString('pt-BR')}
+                        {sale.quantity}x a {formatCurrency(sale.unitPrice)} • Data: {formatDateBR(sale.saleDate)}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">

@@ -86,7 +86,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
   const paymentsInMonth = state.payments.filter((p) => p.monthKey === currentMonthKey);
   const expensesInMonth = state.expenses.filter((e) => e.monthKey === currentMonthKey);
 
-  // Indicator 1: Gasto com produção (Interligado com Almoxarifado ➔ Receita ➔ Vendas)
+  // Indicator 1: Gasto com produção (Interligado com Depósito ➔ Livro de Receitas ➔ Vendas)
   const gastoProducaoVendasMonth = salesInMonth.reduce((acc, s) => {
     if (typeof s.estimatedUnitCost === 'number' && s.estimatedUnitCost >= 0) {
       return acc + (s.quantity * s.estimatedUnitCost);
@@ -119,6 +119,30 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
   // Extra metrics for Regra de 3 explanation
   const totalDocesVendidosMonth = salesInMonth.reduce((acc, s) => acc + s.quantity, 0);
   const totalFaturamentoBrutoMonth = salesInMonth.reduce((acc, s) => acc + s.totalPrice, 0);
+
+  // Real data for the visual chart: gross sales versus margin after recipe cost.
+  const weekLabels = ['1–7', '8–14', '15–21', '22–28', '29–31'];
+  const weeklyChart = weekLabels.map((label, index) => {
+    const weekSales = salesInMonth.filter((sale) => {
+      const day = Number(new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit',
+      }).format(new Date(sale.saleDate)));
+      return Math.min(4, Math.floor((Math.max(1, day) - 1) / 7)) === index;
+    });
+    const revenue = weekSales.reduce((total, sale) => total + sale.totalPrice, 0);
+    const productionCost = weekSales.reduce((total, sale) => {
+      const recipe = state.recipes.find(
+        (item) => item.sweetId === sale.sweetId || item.sweetName.toLowerCase() === sale.sweetName.toLowerCase()
+      );
+      const unitCost = typeof sale.estimatedUnitCost === 'number'
+        ? sale.estimatedUnitCost
+        : recipe?.calculatedUnitCost || 0;
+      return total + sale.quantity * unitCost;
+    }, 0);
+    return { label, revenue, profit: Math.max(0, revenue - productionCost) };
+  });
+  const graphMaximum = Math.max(1, ...weeklyChart.flatMap((week) => [week.revenue, week.profit]));
 
   const handlePrevMonth = () => {
     const idx = monthOptions.findIndex((m) => m.key === currentMonthKey);
@@ -250,7 +274,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
                 {formatCurrency(gastoProducaoMonth)}
               </div>
               <p className="text-[11px] text-rose-700 font-medium">
-                Custo de produção dos insumos calculados do Almoxarifado/Receita.
+                Custo dos insumos calculado pelo Depósito e pelo Livro de Receitas.
               </p>
             </div>
 
@@ -293,6 +317,40 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
               </p>
             </div>
           </div>
+        </div>
+
+        <div className="cash-chart-card">
+          <div className="cash-chart-card__heading">
+            <div>
+              <span><BarChart3 className="w-4 h-4" /> Evolução do mês</span>
+              <h4>Faturamento e margem por semana</h4>
+            </div>
+            <div className="cash-chart-legend">
+              <span><i className="cash-chart-dot cash-chart-dot--revenue" /> Faturamento</span>
+              <span><i className="cash-chart-dot cash-chart-dot--profit" /> Após produção</span>
+            </div>
+          </div>
+
+          <div className="cash-chart" role="img" aria-label="Gráfico semanal de faturamento e margem após os custos de produção">
+            {weeklyChart.map((week) => (
+              <div className="cash-chart-week" key={week.label}>
+                <div className="cash-chart-bars">
+                  <span
+                    className="cash-chart-bar cash-chart-bar--revenue"
+                    style={{ height: `${Math.max(3, (week.revenue / graphMaximum) * 100)}%` }}
+                    title={`Faturamento: ${formatCurrency(week.revenue)}`}
+                  />
+                  <span
+                    className="cash-chart-bar cash-chart-bar--profit"
+                    style={{ height: `${Math.max(3, (week.profit / graphMaximum) * 100)}%` }}
+                    title={`Após produção: ${formatCurrency(week.profit)}`}
+                  />
+                </div>
+                <strong>{week.label}</strong>
+              </div>
+            ))}
+          </div>
+          <p className="cash-chart-caption">Dias do mês · toque ou passe o mouse nas barras para ver os valores</p>
         </div>
       </div>
     </div>

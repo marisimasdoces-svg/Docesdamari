@@ -6,11 +6,12 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>Marisimas Doces - Gestão de Pote</title>
-    <meta name="theme-color" content="#8b5cf6" />
+    <title>Doces da Mari - Painel de Gestão</title>
+    <meta name="description" content="Produção, vendas, cobranças, depósito, livro de receitas e caixa da Doces da Mari." />
+    <meta name="theme-color" content="#df3269" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Marisimas Doces" />
+    <meta name="apple-mobile-web-app-title" content="Doces da Mari" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon-precomposed" href="/apple-touch-icon-precomposed.png" />
@@ -23,28 +24,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Playfair+Display:ital,wght@0,700;0,800;1,700;1,800&family=Cinzel:wght@700;800;900&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   </head>
-  <body class="bg-slate-50 text-slate-800 font-sans antialiased selection:bg-purple-500 selection:text-white">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').then((reg) => {
-            reg.addEventListener('updatefound', () => {
-              const newWorker = reg.installing;
-              if (newWorker) {
-                newWorker.addEventListener('statechange', () => {
-                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                    console.log('New update available, auto-reloading...');
-                    window.location.reload();
-                  }
-                });
-              }
-            });
-          }).catch(err => console.log('SW register fail:', err));
-        });
-      }
-    </script>
   </body>
 </html>
-
