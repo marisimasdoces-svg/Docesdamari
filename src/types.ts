@@ -44,6 +44,10 @@ export interface ProductionBatch {
   totalProduced: number;
   totalSold: number;
   unitPrice: number;
+  recipeId?: string;
+  productionCost?: number; // custo total real/snapshot do lote produzido
+  unitCost?: number; // custo por pote no momento da producao
+  ingredientsUsed?: RecipeIngredient[]; // quantidades efetivamente baixadas do deposito
   notes?: string;
   status: 'active' | 'closed';
   createdAt: string;

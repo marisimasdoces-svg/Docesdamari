@@ -61,8 +61,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   const soldToday = salesToday.reduce((total, sale) => total + (sale.quantity || 0), 0);
 
   const grossMonth = salesInMonth.reduce((total, sale) => total + (sale.totalPrice || 0), 0);
+  const unitsSoldInMonth = salesInMonth.reduce((total, sale) => total + (sale.quantity || 0), 0);
   const immediateReceived = salesInMonth
-    .filter((sale) => sale.isPaidImmediately || sale.paymentStatus === 'paid')
+    .filter((sale) => sale.isPaidImmediately)
     .reduce((total, sale) => total + (sale.totalPrice || 0), 0);
   const paymentsMonth = state.payments
     .filter((payment) => payment.monthKey === selectedMonth)
@@ -93,7 +94,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       tone: 'sale',
       eyebrow: 'Lançamento rápido',
       title: 'Nova venda',
-      detail: `${salesInMonth.length} ${salesInMonth.length === 1 ? 'venda no mês' : 'vendas no mês'}`,
+      detail: `${unitsSoldInMonth} ${unitsSoldInMonth === 1 ? 'pote vendido' : 'potes vendidos'} · ${salesInMonth.length} ${salesInMonth.length === 1 ? 'pedido' : 'pedidos'}`,
       icon: ShoppingBag,
     },
     {

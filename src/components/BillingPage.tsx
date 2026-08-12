@@ -87,7 +87,7 @@ export const BillingPage: React.FC<BillingPageProps> = ({
       const totalGrossValue = buyerSales.reduce((acc, curr) => acc + curr.totalPrice, 0);
 
       const paidImmediatelyValue = buyerSales
-        .filter((s) => s.isPaidImmediately || s.paymentStatus === 'paid')
+        .filter((s) => s.isPaidImmediately)
         .reduce((acc, curr) => acc + curr.totalPrice, 0);
 
       const buyerPayments = state.payments.filter(
@@ -165,7 +165,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         return {
           ...sale,
           paymentStatus: 'paid' as const,
-          isPaidImmediately: true,
           paymentMethod: 'pix',
           updatedAt: nowIso,
         };
@@ -197,8 +196,7 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         ) {
           return {
             ...sale,
-            paymentStatus: 'pending' as const,
-            isPaidImmediately: false,
+            paymentStatus: sale.isPaidImmediately ? ('paid' as const) : ('pending' as const),
             updatedAt: nowIso,
           };
         }
@@ -312,7 +310,7 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         return items;
       }, new Map<string, number>())
     ).map(([name, quantity]) => `${quantity}x ${name}`).join(', ');
-    const text = `Oi, ${sum.buyer.name.split(' ')[0]}! Tudo bem? 🧁\n\nPassando com carinho para lembrar dos seus Doces da Mari de ${formatMonthShort(selectedMonth)}.\n\n${purchaseSummary || `${sum.totalDoces} potes`}\n*Valor pendente: ${formatCurrency(sum.pendingBalance)}*\n\nPIX (e-mail): mdamerso@hotmail.com\nFavorecida: Mariane Simas\n\nDepois é só mandar o comprovante por aqui. Muito obrigada! 💗`;
+    const text = `Olá, ${sum.buyer.name.split(' ')[0]}. Tudo bem?\n\nEstou entrando em contato sobre as compras na Doces da Mari referentes a ${formatMonthShort(selectedMonth)}:\n${purchaseSummary || `${sum.totalDoces} potes`}\n\n*Valor pendente: ${formatCurrency(sum.pendingBalance)}*\n\nPIX (e-mail): mdamerso@hotmail.com\nFavorecida: Mariane Simas\n\nApós o pagamento, pode enviar o comprovante por aqui. Obrigado.`;
     const encoded = encodeURIComponent(text);
     const url = phone
       ? `https://wa.me/55${phone.replace(/\D/g, '')}?text=${encoded}`

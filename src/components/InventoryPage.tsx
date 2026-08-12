@@ -35,6 +35,13 @@ interface RecipeIngredientRow {
   quantityUsedStr: string;
 }
 
+interface RepeatIngredientRow {
+  inventoryItemId: string;
+  inventoryItemName: string;
+  unit: string;
+  quantityUsedStr: string;
+}
+
 // Helper to safely parse localized numbers typed with comma or dot (e.g. "7,98" or "7.98")
 const parseFormattedNumber = (val: string | number): number => {
   if (typeof val === 'number') return isNaN(val) ? 0 : val;
@@ -59,6 +66,9 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const [showStockListModal, setShowStockListModal] = useState(false);
   const [showNewRecipeModal, setShowNewRecipeModal] = useState(false);
   const [showRecipeBookModal, setShowRecipeBookModal] = useState(false);
+  const [repeatRecipe, setRepeatRecipe] = useState<Recipe | null>(null);
+  const [repeatQuantityStr, setRepeatQuantityStr] = useState('');
+  const [repeatIngredients, setRepeatIngredients] = useState<RepeatIngredientRow[]>([]);
 
   // ESTOQUE: FORM STATES
   const [itemName, setItemName] = useState('');
@@ -130,11 +140,9 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     const updatedInventory = state.inventory.map((item) => {
       if (item.id === itemId) {
         const newRemaining = Math.max(0, item.remainingQuantity + delta);
-        const newTotal = delta > 0 ? Math.max(item.totalQuantityBought, newRemaining) : item.totalQuantityBought;
         return {
           ...item,
           remainingQuantity: newRemaining,
-          totalQuantityBought: newTotal,
           updatedAt: nowIso,
         };
       }
@@ -288,13 +296,18 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     alert('✅ Contas do mês anterior salvas. Luz e água já entraram no cálculo desta receita.');
   };
 
-  const consumeInventoryForRecipe = (recipe: Recipe, producedQuantity: number, nowIso: string): InventoryItem[] | null => {
+  const consumeInventoryForRecipe = (
+    recipe: Recipe,
+    producedQuantity: number,
+    nowIso: string,
+    actualIngredients?: RecipeIngredient[]
+  ): InventoryItem[] | null => {
     const factor = producedQuantity / Math.max(1, recipe.yieldsCount);
     const usage = new Map<string, number>();
-    recipe.ingredients.forEach((ingredient) => {
+    (actualIngredients || recipe.ingredients).forEach((ingredient) => {
       usage.set(
         ingredient.inventoryItemId,
-        (usage.get(ingredient.inventoryItemId) || 0) + ingredient.quantityUsed * factor
+        (usage.get(ingredient.inventoryItemId) || 0) + ingredient.quantityUsed * (actualIngredients ? 1 : factor)
       );
     });
     const shortages = state.inventory
@@ -441,20 +454,66 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     alert(`🎉 Receita de "${recipeSweetName}" salva no Livro de Receitas. O estoque só será baixado quando você confirmar uma produção.`);
   };
 
-  const handleRegisterTodayProduction = (recipe: Recipe) => {
-    const qtyStr = window.prompt(
-      `Quantos potes de "${recipe.sweetName}" você produziu hoje?`,
-      String(recipe.yieldsCount || 20)
-    );
-    if (!qtyStr) return;
-    const qty = parseInt(qtyStr, 10);
-    if (isNaN(qty) || qty <= 0) {
-      alert('Por favor, informe uma quantidade válida.');
+  const buildScaledIngredients = (recipe: Recipe, quantity: number): RepeatIngredientRow[] => {
+    const factor = quantity / Math.max(1, recipe.yieldsCount);
+    return recipe.ingredients.map((ingredient) => ({
+      inventoryItemId: ingredient.inventoryItemId,
+      inventoryItemName: ingredient.inventoryItemName,
+      unit: ingredient.unit,
+      quantityUsedStr: (ingredient.quantityUsed * factor).toFixed(3).replace(/\.?0+$/, '').replace('.', ','),
+    }));
+  };
+
+  const handleOpenRepeatRecipe = (recipe: Recipe) => {
+    const quantity = recipe.yieldsCount || 1;
+    setRepeatRecipe(recipe);
+    setRepeatQuantityStr(String(quantity));
+    setRepeatIngredients(buildScaledIngredients(recipe, quantity));
+  };
+
+  const handleRepeatQuantityChange = (value: string) => {
+    setRepeatQuantityStr(value);
+    if (!repeatRecipe) return;
+    const quantity = Math.max(0, Math.floor(parseFormattedNumber(value)));
+    setRepeatIngredients(buildScaledIngredients(repeatRecipe, quantity));
+  };
+
+  const handleUpdateRepeatIngredient = (inventoryItemId: string, value: string) => {
+    setRepeatIngredients((rows) => rows.map((row) =>
+      row.inventoryItemId === inventoryItemId ? { ...row, quantityUsedStr: value } : row
+    ));
+  };
+
+  const handleRegisterTodayProduction = () => {
+    if (!repeatRecipe) return;
+    const recipe = repeatRecipe;
+    const qty = Math.floor(parseFormattedNumber(repeatQuantityStr));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      alert('Por favor, informe uma quantidade válida de potes.');
       return;
     }
 
+    const scaledIndirectCost = (recipe.indirectCost || 0) * (qty / Math.max(1, recipe.yieldsCount));
+    const actualIngredients: RecipeIngredient[] = repeatIngredients.map((row) => {
+      const inventoryItem = state.inventory.find((item) => item.id === row.inventoryItemId);
+      const quantityUsed = Math.max(0, parseFormattedNumber(row.quantityUsedStr));
+      const currentUnitCost = inventoryItem && inventoryItem.totalQuantityBought > 0
+        ? inventoryItem.totalCostPaid / inventoryItem.totalQuantityBought
+        : inventoryItem?.unitCost || 0;
+      return {
+        inventoryItemId: row.inventoryItemId,
+        inventoryItemName: row.inventoryItemName,
+        quantityUsed,
+        unit: row.unit,
+        estimatedCost: quantityUsed * currentUnitCost,
+      };
+    });
+    const productionCost = actualIngredients.reduce((total, ingredient) => total + ingredient.estimatedCost, 0)
+      + scaledIndirectCost;
+    const productionUnitCost = productionCost / qty;
+
     const nowIso = new Date().toISOString();
-    const updatedInventory = consumeInventoryForRecipe(recipe, qty, nowIso);
+    const updatedInventory = consumeInventoryForRecipe(recipe, qty, nowIso, actualIngredients);
     if (!updatedInventory) return;
 
     const registeredSweet = state.sweets.find(
@@ -468,6 +527,10 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       totalProduced: qty,
       totalSold: 0,
       unitPrice: registeredSweet ? registeredSweet.price : 13.0,
+      recipeId: recipe.id,
+      productionCost,
+      unitCost: productionUnitCost,
+      ingredientsUsed: actualIngredients,
       startDate: getSaoPauloDateKey(),
       endDate: getSaoPauloDateKey(),
       createdAt: nowIso,
@@ -488,7 +551,8 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     };
 
     onStateChange(newState);
-    alert(`✅ Produção de ${qty} potes de "${recipe.sweetName}" registrada. Os ingredientes foram baixados do Depósito automaticamente.`);
+    setRepeatRecipe(null);
+    alert(`Produção de ${qty} potes de "${recipe.sweetName}" registrada. Custo total: ${formatCurrency(productionCost)}. Os ingredientes foram baixados do Depósito.`);
   };
 
   // Low stock alert items
@@ -1263,6 +1327,10 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                   );
                   const salePrice = registeredSweet ? registeredSweet.price : 13;
                   const estimatedProfit = salePrice - recipe.calculatedUnitCost;
+                  const recipeTotalCost = recipe.ingredients.reduce(
+                    (total, ingredient) => total + (ingredient.estimatedCost || 0),
+                    0
+                  ) + (recipe.indirectCost || 0);
 
                   return (
                     <div key={recipe.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 text-xs shadow-xs">
@@ -1273,10 +1341,14 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 bg-white p-2.5 rounded-xl border border-slate-200 text-center font-mono">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-white p-2.5 rounded-xl border border-slate-200 text-center font-mono">
                         <div>
                           <span className="text-[9px] uppercase font-bold text-slate-400 block">Rendimento:</span>
                           <span className="font-bold text-slate-800 text-xs">{recipe.yieldsCount} potes</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-slate-400 block">Custo total:</span>
+                          <span className="font-extrabold text-rose-700 text-xs">{formatCurrency(recipeTotalCost)}</span>
                         </div>
                         <div>
                           <span className="text-[9px] uppercase font-bold text-slate-400 block">Preço Venda:</span>
@@ -1303,17 +1375,120 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
                       <button
                         type="button"
-                        onClick={() => handleRegisterTodayProduction(recipe)}
+                        onClick={() => handleOpenRepeatRecipe(recipe)}
                         className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5 border border-amber-600/30"
                       >
-                        <span>🍳</span>
-                        <span>Registrar Produção de Hoje ({recipe.yieldsCount} potes)</span>
+                        <ChefHat className="w-4 h-4" />
+                        <span>Produzir novamente</span>
                       </button>
                     </div>
                   );
                 })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* CARD FLUTUANTE: REPETIR RECEITA COM NOVO RENDIMENTO */}
+      {repeatRecipe && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[60] flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-amber-300 rounded-3xl p-5 sm:p-7 w-full max-w-3xl shadow-2xl space-y-5 max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
+            <div className="flex items-start justify-between border-b border-slate-200 pb-4">
+              <div>
+                <div className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-800">
+                  <ChefHat className="w-4 h-4" /> Produzir novamente
+                </div>
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 mt-1">{repeatRecipe.sweetName}</h3>
+                <p className="text-xs text-slate-500 mt-1">A receita original permanece intacta. Confirme as quantidades realmente utilizadas.</p>
+              </div>
+              <button type="button" onClick={() => setRepeatRecipe(null)} className="p-2 text-slate-400 hover:text-slate-900 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                <span className="block text-[10px] font-black uppercase text-amber-800 mb-2">Quantos potes serão produzidos?</span>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={repeatQuantityStr}
+                  onChange={(event) => handleRepeatQuantityChange(event.target.value)}
+                  className="w-full p-3 bg-white border-2 border-amber-400 rounded-xl text-2xl font-black font-mono text-slate-900"
+                />
+                <small className="block mt-2 text-amber-800">Receita-base: {repeatRecipe.yieldsCount} potes</small>
+              </label>
+
+              {(() => {
+                const qty = Math.max(1, Math.floor(parseFormattedNumber(repeatQuantityStr)));
+                const ingredientsCost = repeatIngredients.reduce((total, row) => {
+                  const inventoryItem = state.inventory.find((item) => item.id === row.inventoryItemId);
+                  const currentUnitCost = inventoryItem && inventoryItem.totalQuantityBought > 0
+                    ? inventoryItem.totalCostPaid / inventoryItem.totalQuantityBought
+                    : inventoryItem?.unitCost || 0;
+                  return total + parseFormattedNumber(row.quantityUsedStr) * currentUnitCost;
+                }, 0);
+                const indirect = (repeatRecipe.indirectCost || 0) * (qty / Math.max(1, repeatRecipe.yieldsCount));
+                const total = ingredientsCost + indirect;
+                const price = state.sweets.find((sweet) =>
+                  sweet.id === repeatRecipe.sweetId
+                  || sweet.recipeId === repeatRecipe.id
+                  || sweet.name.toLowerCase() === repeatRecipe.sweetName.toLowerCase()
+                )?.price || 0;
+                return (
+                  <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 grid grid-cols-2 gap-3">
+                    <div><span className="text-[9px] uppercase font-bold text-purple-700 block">Custo total</span><strong className="text-lg text-slate-900 font-mono">{formatCurrency(total)}</strong></div>
+                    <div><span className="text-[9px] uppercase font-bold text-purple-700 block">Custo por pote</span><strong className="text-lg text-slate-900 font-mono">{formatCurrency(total / qty)}</strong></div>
+                    <div><span className="text-[9px] uppercase font-bold text-purple-700 block">Lucro por pote</span><strong className="text-lg text-emerald-700 font-mono">{formatCurrency(price - total / qty)}</strong></div>
+                    <div><span className="text-[9px] uppercase font-bold text-purple-700 block">Lucro previsto</span><strong className="text-lg text-emerald-700 font-mono">{formatCurrency(price * qty - total)}</strong></div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black uppercase text-slate-700">Ingredientes recalculados</h4>
+                <span className="text-[10px] text-slate-500">Você pode corrigir o consumo real</span>
+              </div>
+              {repeatIngredients.map((row) => {
+                const inventoryItem = state.inventory.find((item) => item.id === row.inventoryItemId);
+                const needed = parseFormattedNumber(row.quantityUsedStr);
+                const hasShortage = needed > (inventoryItem?.remainingQuantity || 0);
+                return (
+                  <div key={row.inventoryItemId} className={`grid grid-cols-[1fr_110px] gap-3 items-center border rounded-xl p-3 ${hasShortage ? 'bg-rose-50 border-rose-300' : 'bg-slate-50 border-slate-200'}`}>
+                    <div>
+                      <strong className="block text-xs text-slate-900">{row.inventoryItemName}</strong>
+                      <span className={`text-[10px] ${hasShortage ? 'text-rose-700 font-bold' : 'text-slate-500'}`}>
+                        Disponível: {(inventoryItem?.remainingQuantity || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} {row.unit}
+                        {hasShortage ? ' · quantidade insuficiente' : ''}
+                      </span>
+                    </div>
+                    <label className="relative">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={row.quantityUsedStr}
+                        onChange={(event) => handleUpdateRepeatIngredient(row.inventoryItemId, event.target.value)}
+                        className={`w-full p-2 pr-10 bg-white border rounded-lg font-mono font-bold text-right ${hasShortage ? 'border-rose-400 text-rose-800' : 'border-slate-300 text-slate-900'}`}
+                      />
+                      <span className="absolute right-2 top-2.5 text-[9px] text-slate-500">{row.unit}</span>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleRegisterTodayProduction}
+              disabled={repeatIngredients.some((row) => parseFormattedNumber(row.quantityUsedStr) > (state.inventory.find((item) => item.id === row.inventoryItemId)?.remainingQuantity || 0))}
+              className="w-full py-3.5 bg-amber-500 enabled:hover:bg-amber-600 disabled:bg-slate-300 disabled:text-slate-500 text-slate-950 font-black text-sm rounded-xl shadow-md disabled:cursor-not-allowed"
+            >
+              Confirmar produção e baixar ingredientes
+            </button>
           </div>
         </div>
       )}

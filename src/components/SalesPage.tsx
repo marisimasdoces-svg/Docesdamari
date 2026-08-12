@@ -198,10 +198,12 @@ export const SalesPage: React.FC<SalesPageProps> = ({
 
     let targetBatch = sweetBatch;
     let updatedBatches = [...state.batches];
+    let saleUnitCost: number | undefined;
 
     if (targetBatch && updatedBatches.some((b) => b.id === targetBatch!.id)) {
       updatedBatches = updatedBatches.map((b) => {
         if (b.id === targetBatch!.id) {
+          saleUnitCost = typeof b.unitCost === 'number' ? b.unitCost : undefined;
           return { ...b, totalSold: b.totalSold + quantity, updatedAt: nowIso };
         }
         return b;
@@ -230,6 +232,13 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       targetBatch = newAutoBatch;
     }
 
+    if (typeof saleUnitCost !== 'number') {
+      const linkedRecipe = state.recipes.find(
+        (recipe) => (sweet && recipe.sweetId === sweet.id) || (sweet && recipe.sweetName.toLowerCase() === sweet.name.toLowerCase())
+      );
+      saleUnitCost = linkedRecipe?.calculatedUnitCost;
+    }
+
     const newSale: Sale = {
       id: `sale-${Date.now()}`,
       buyerId: buyer.id,
@@ -251,6 +260,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       paymentMethod: isPaid ? paymentMethod : 'fiado',
       registeredBy: currentUser.name,
       notes: saleNotes.trim(),
+      estimatedUnitCost: saleUnitCost,
     };
 
     const newState: AppState = {
@@ -382,7 +392,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   // SEND WHATSAPP
   const handleSendWhatsApp = (sale: Sale) => {
     const phone = sale.buyerId ? state.buyers.find((b) => b.id === sale.buyerId)?.phone : '';
-    const text = `Oi, ${sale.buyerName.split(' ')[0]}! Tudo bem? 🧁\n\nPassando com carinho para lembrar da sua compra de ${sale.quantity}x ${sale.sweetName}.\n\n*Valor: ${formatCurrency(sale.totalPrice)}*\n\nPIX (e-mail): mdamerso@hotmail.com\nFavorecida: Mariane Simas\n\nDepois é só mandar o comprovante por aqui. Muito obrigada! 💗`;
+    const text = `Olá, ${sale.buyerName.split(' ')[0]}. Tudo bem?\n\nEstou entrando em contato sobre a sua compra na Doces da Mari:\n${sale.quantity}x ${sale.sweetName}\n\n*Valor pendente: ${formatCurrency(sale.totalPrice)}*\n\nPIX (e-mail): mdamerso@hotmail.com\nFavorecida: Mariane Simas\n\nApós o pagamento, pode enviar o comprovante por aqui. Obrigado.`;
     const url = phone
       ? `https://wa.me/55${phone.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`
       : `https://wa.me/?text=${encodeURIComponent(text)}`;
@@ -399,9 +409,10 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   const fiadoSales = monthSales.filter((s) => s.paymentStatus === 'pending');
   const paidSales = monthSales.filter((s) => s.paymentStatus === 'paid');
 
-  const countFiado = fiadoSales.length;
-  const countPaid = paidSales.length;
-  const countTotal = monthSales.length;
+  const countFiado = fiadoSales.reduce((total, sale) => total + sale.quantity, 0);
+  const countPaid = paidSales.reduce((total, sale) => total + sale.quantity, 0);
+  const countTotal = monthSales.reduce((total, sale) => total + sale.quantity, 0);
+  const ordersTotal = monthSales.length;
 
   const filteredSales = monthSales.filter(
     (s) =>
@@ -444,7 +455,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
                 Vendas Fiado
               </div>
               <div className="text-3xl font-black text-amber-950 font-mono mt-1">
-                {countFiado} <span className="text-xs font-bold text-amber-700">vendas</span>
+                {countFiado} <span className="text-xs font-bold text-amber-700">potes</span>
               </div>
             </div>
             <div className="w-10 h-10 bg-amber-200/60 rounded-xl flex items-center justify-center text-xl">
@@ -458,7 +469,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
                 Vendas Pagas
               </div>
               <div className="text-3xl font-black text-emerald-950 font-mono mt-1">
-                {countPaid} <span className="text-xs font-bold text-emerald-700">vendas</span>
+                {countPaid} <span className="text-xs font-bold text-emerald-700">potes</span>
               </div>
             </div>
             <div className="w-10 h-10 bg-emerald-200/60 rounded-xl flex items-center justify-center text-xl">
@@ -472,7 +483,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({
                 Total do Mês
               </div>
               <div className="text-3xl font-black text-purple-950 font-mono mt-1">
-                {countTotal} <span className="text-xs font-bold text-purple-700">vendas</span>
+                {countTotal} <span className="text-xs font-bold text-purple-700">potes</span>
+                <span className="block text-[10px] font-bold text-purple-600 mt-1">{ordersTotal} {ordersTotal === 1 ? 'pedido' : 'pedidos'}</span>
               </div>
             </div>
             <div className="w-10 h-10 bg-purple-200/60 rounded-xl flex items-center justify-center text-xl">

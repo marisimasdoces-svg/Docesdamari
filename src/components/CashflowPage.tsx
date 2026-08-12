@@ -1,22 +1,7 @@
 import React, { useState } from 'react';
-import { AppState, User } from '../types';
+import { AppState, Sale, User } from '../types';
 import { formatCurrency, formatMonthShort } from '../lib/storage';
-import {
-  Wallet,
-  TrendingUp,
-  Calendar,
-  ArrowDownCircle,
-  BarChart3,
-  DollarSign,
-  PiggyBank,
-  ChevronLeft,
-  ChevronRight,
-  Calculator,
-  CheckCircle2,
-  Layers,
-  Sparkles,
-  ArrowRight,
-} from 'lucide-react';
+import { BarChart3, Calendar, ChevronLeft, ChevronRight, TrendingUp } from 'lucide-react';
 
 interface CashflowPageProps {
   state: AppState;
@@ -25,334 +10,190 @@ interface CashflowPageProps {
   currentUser: User;
 }
 
-export const CashflowPage: React.FC<CashflowPageProps> = ({
-  state,
-  selectedMonth: initialMonth,
-}) => {
-  // Calendar month selection automatically synced with global selectedMonth
-  const [currentMonthKey, setCurrentMonthKey] = useState<string>(initialMonth || '2026-08');
+const saleCost = (state: AppState, sale: Sale) => {
+  if (typeof sale.estimatedUnitCost === 'number' && sale.estimatedUnitCost >= 0) {
+    return sale.quantity * sale.estimatedUnitCost;
+  }
+  const batch = state.batches.find((item) => item.id === sale.batchId);
+  if (typeof batch?.unitCost === 'number' && batch.unitCost >= 0) {
+    return sale.quantity * batch.unitCost;
+  }
+  const recipe = state.recipes.find(
+    (item) => item.sweetId === sale.sweetId || item.sweetName.toLowerCase() === sale.sweetName.toLowerCase()
+  );
+  return sale.quantity * (recipe?.calculatedUnitCost || 0);
+};
+
+const receivedFromSales = (sales: Sale[]) => sales
+  .filter((sale) => sale.isPaidImmediately)
+  .reduce((total, sale) => total + sale.totalPrice, 0);
+
+export const CashflowPage: React.FC<CashflowPageProps> = ({ state, selectedMonth: initialMonth }) => {
+  const [currentMonthKey, setCurrentMonthKey] = useState(initialMonth || '2026-08');
 
   React.useEffect(() => {
-    if (initialMonth) {
-      setCurrentMonthKey(initialMonth);
-    }
+    if (initialMonth) setCurrentMonthKey(initialMonth);
   }, [initialMonth]);
 
-  // Month list builder from 2026-01 to 2030-12
-  const generateMonthList = () => {
-    const list: { key: string; label: string }[] = [];
-    const monthNames = [
-      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
-    ];
-    for (let year = 2026; year <= 2030; year++) {
-      for (let month = 1; month <= 12; month++) {
-        const mm = String(month).padStart(2, '0');
-        const key = `${year}-${mm}`;
-        const label = `${monthNames[month - 1]} / ${year}`;
-        list.push({ key, label });
-      }
-    }
-    return list;
-  };
+  const monthOptions = React.useMemo(() => {
+    const names = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    return Array.from({ length: 60 }, (_, index) => {
+      const year = 2026 + Math.floor(index / 12);
+      const month = (index % 12) + 1;
+      const mm = String(month).padStart(2, '0');
+      return { key: `${year}-${mm}`, label: `${names[month - 1]} / ${year}` };
+    });
+  }, []);
 
-  const monthOptions = generateMonthList();
+  const selectedYear = currentMonthKey.slice(0, 4);
+  const yearSales = state.sales.filter((sale) => sale.monthKey.startsWith(selectedYear));
+  const yearPayments = state.payments.filter((payment) => payment.monthKey.startsWith(selectedYear));
+  const yearPurchases = state.expenses.filter((expense) => expense.monthKey.startsWith(selectedYear));
+  const yearBatches = state.batches.filter((batch) => (batch.createdAt || batch.startDate).startsWith(selectedYear));
 
-  // 1. CUMULATIVE STATS (CAIXA ACUMULADO CONSOLIDADO)
-  const allSalesUpfront = state.sales
-    .filter((s) => s.isPaidImmediately)
-    .reduce((acc, curr) => acc + curr.totalPrice, 0);
-  const allSettlements = state.payments.reduce((acc, curr) => acc + curr.amountPaid, 0);
-  const totalCumulativeReceived = allSalesUpfront + allSettlements;
-
-  // Cumulative production cost calculated from receipts or estimated unit costs for retroactive sales
-  const cumulativeProductionCostFromSales = state.sales.reduce((acc, s) => {
-    if (typeof s.estimatedUnitCost === 'number' && s.estimatedUnitCost >= 0) {
-      return acc + (s.quantity * s.estimatedUnitCost);
-    }
-    const recipe = state.recipes.find(
-      (r) => r.sweetId === s.sweetId || r.sweetName.toLowerCase() === s.sweetName.toLowerCase()
-    );
-    const unitCost = recipe ? recipe.calculatedUnitCost : 4.95;
-    return acc + (s.quantity * unitCost);
+  const yearRevenue = yearSales.reduce((total, sale) => total + sale.totalPrice, 0);
+  const yearReceived = receivedFromSales(yearSales) + yearPayments.reduce((total, payment) => total + payment.amountPaid, 0);
+  const yearPending = yearSales.filter((sale) => sale.paymentStatus === 'pending').reduce((total, sale) => total + sale.totalPrice, 0);
+  const yearStockPurchases = yearPurchases.reduce((total, expense) => total + expense.totalCost, 0);
+  const yearSoldCost = yearSales.reduce((total, sale) => total + saleCost(state, sale), 0);
+  const yearRecordedProductionCost = yearBatches.reduce((total, batch) => total + (batch.productionCost || 0), 0);
+  const yearLegacyProductionCost = yearBatches.reduce((total, batch) => {
+    if (typeof batch.productionCost === 'number') return total;
+    const recipe = state.recipes.find((item) => item.id === batch.recipeId || item.sweetId === batch.sweetId || item.sweetName.toLowerCase() === batch.sweetName.toLowerCase());
+    return total + batch.totalProduced * (recipe?.calculatedUnitCost || 0);
+  }, 0);
+  const yearProductionCost = yearRecordedProductionCost + yearLegacyProductionCost;
+  const yearExpectedProfit = yearRevenue - yearSoldCost;
+  const yearCashBalance = yearReceived - yearStockPurchases;
+  const inventoryValue = state.inventory.reduce((total, item) => {
+    const unitCost = item.totalQuantityBought > 0 ? item.totalCostPaid / item.totalQuantityBought : item.unitCost;
+    return total + item.remainingQuantity * unitCost;
   }, 0);
 
-  const cumulativeExpenses = state.expenses.reduce((acc, curr) => acc + curr.totalCost, 0);
-  const totalCumulativeExpenses = Math.max(cumulativeProductionCostFromSales, cumulativeExpenses);
-  const totalCumulativeProfit = totalCumulativeReceived - totalCumulativeExpenses;
+  const monthSales = state.sales.filter((sale) => sale.monthKey === currentMonthKey);
+  const monthPayments = state.payments.filter((payment) => payment.monthKey === currentMonthKey);
+  const monthPurchases = state.expenses.filter((expense) => expense.monthKey === currentMonthKey);
+  const monthBatches = state.batches.filter((batch) => (batch.createdAt || batch.startDate).startsWith(currentMonthKey));
+  const monthRevenue = monthSales.reduce((total, sale) => total + sale.totalPrice, 0);
+  const monthReceived = receivedFromSales(monthSales) + monthPayments.reduce((total, payment) => total + payment.amountPaid, 0);
+  const monthPending = monthSales.filter((sale) => sale.paymentStatus === 'pending').reduce((total, sale) => total + sale.totalPrice, 0);
+  const monthStockPurchases = monthPurchases.reduce((total, expense) => total + expense.totalCost, 0);
+  const monthSoldCost = monthSales.reduce((total, sale) => total + saleCost(state, sale), 0);
+  const monthExpectedProfit = monthRevenue - monthSoldCost;
+  const monthCashBalance = monthReceived - monthStockPurchases;
+  const monthProducedUnits = monthBatches.reduce((total, batch) => total + batch.totalProduced, 0);
+  const monthSoldUnits = monthSales.reduce((total, sale) => total + sale.quantity, 0);
 
-  // 2. MONTH BY MONTH STATS (CAIXA MÊS A MÊS INTEGRADO)
-  const salesInMonth = state.sales.filter((s) => s.monthKey === currentMonthKey);
-  const paymentsInMonth = state.payments.filter((p) => p.monthKey === currentMonthKey);
-  const expensesInMonth = state.expenses.filter((e) => e.monthKey === currentMonthKey);
-
-  // Indicator 1: Gasto com produção (Interligado com Depósito ➔ Livro de Receitas ➔ Vendas)
-  const gastoProducaoVendasMonth = salesInMonth.reduce((acc, s) => {
-    if (typeof s.estimatedUnitCost === 'number' && s.estimatedUnitCost >= 0) {
-      return acc + (s.quantity * s.estimatedUnitCost);
-    }
-    const recipe = state.recipes.find(
-      (r) => r.sweetId === s.sweetId || r.sweetName.toLowerCase() === s.sweetName.toLowerCase()
-    );
-    const unitCost = recipe ? recipe.calculatedUnitCost : 4.95;
-    return acc + (s.quantity * unitCost);
-  }, 0);
-
-  const expensesCostMonth = expensesInMonth.reduce((acc, curr) => acc + curr.totalCost, 0);
-  const gastoProducaoMonth = gastoProducaoVendasMonth > 0 ? gastoProducaoVendasMonth : expensesCostMonth;
-
-  // Indicator 2: Total recebido (Immediate paid sales + settlements in month)
-  const upfrontReceivedMonth = salesInMonth
-    .filter((s) => s.isPaidImmediately)
-    .reduce((acc, curr) => acc + curr.totalPrice, 0);
-  const settlementsReceivedMonth = paymentsInMonth.reduce((acc, curr) => acc + curr.amountPaid, 0);
-  const totalRecebidoMonth = upfrontReceivedMonth + settlementsReceivedMonth;
-
-  // Indicator 3: Total a receber (Pending fiado sales in month)
-  const totalAReceberMonth = salesInMonth
-    .filter((s) => s.paymentStatus === 'pending')
-    .reduce((acc, curr) => acc + curr.totalPrice, 0);
-
-  // Indicator 4: Lucro do Mês (Total Recebido - Gasto com Produção)
-  const lucroMonth = totalRecebidoMonth - gastoProducaoMonth;
-
-  // Extra metrics for Regra de 3 explanation
-  const totalDocesVendidosMonth = salesInMonth.reduce((acc, s) => acc + s.quantity, 0);
-  const totalFaturamentoBrutoMonth = salesInMonth.reduce((acc, s) => acc + s.totalPrice, 0);
-
-  // Real data for the visual chart: gross sales versus margin after recipe cost.
   const weekLabels = ['1–7', '8–14', '15–21', '22–28', '29–31'];
   const weeklyChart = weekLabels.map((label, index) => {
-    const weekSales = salesInMonth.filter((sale) => {
-      const day = Number(new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
-        day: '2-digit',
-      }).format(new Date(sale.saleDate)));
+    const sales = monthSales.filter((sale) => {
+      const day = Number(new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit' }).format(new Date(sale.saleDate)));
       return Math.min(4, Math.floor((Math.max(1, day) - 1) / 7)) === index;
     });
-    const revenue = weekSales.reduce((total, sale) => total + sale.totalPrice, 0);
-    const productionCost = weekSales.reduce((total, sale) => {
-      const recipe = state.recipes.find(
-        (item) => item.sweetId === sale.sweetId || item.sweetName.toLowerCase() === sale.sweetName.toLowerCase()
-      );
-      const unitCost = typeof sale.estimatedUnitCost === 'number'
-        ? sale.estimatedUnitCost
-        : recipe?.calculatedUnitCost || 0;
-      return total + sale.quantity * unitCost;
-    }, 0);
-    return { label, revenue, profit: Math.max(0, revenue - productionCost) };
+    const faturamento = sales.reduce((total, sale) => total + sale.totalPrice, 0);
+    const recebido = receivedFromSales(sales) + monthPayments.filter((payment) => {
+      const day = Number(new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit' }).format(new Date(payment.paymentDate)));
+      return Math.min(4, Math.floor((Math.max(1, day) - 1) / 7)) === index;
+    }).reduce((total, payment) => total + payment.amountPaid, 0);
+    return { label, faturamento, recebido };
   });
-  const graphMaximum = Math.max(1, ...weeklyChart.flatMap((week) => [week.revenue, week.profit]));
+  const graphMaximum = Math.max(1, ...weeklyChart.flatMap((week) => [week.faturamento, week.recebido]));
 
-  const handlePrevMonth = () => {
-    const idx = monthOptions.findIndex((m) => m.key === currentMonthKey);
-    if (idx > 0) {
-      setCurrentMonthKey(monthOptions[idx - 1].key);
-    }
+  const moveMonth = (offset: number) => {
+    const index = monthOptions.findIndex((month) => month.key === currentMonthKey);
+    const next = monthOptions[index + offset];
+    if (next) setCurrentMonthKey(next.key);
   };
 
-  const handleNextMonth = () => {
-    const idx = monthOptions.findIndex((m) => m.key === currentMonthKey);
-    if (idx < monthOptions.length - 1) {
-      setCurrentMonthKey(monthOptions[idx + 1].key);
-    }
+  const yearCards = [
+    ['Faturamento', yearRevenue, 'Tudo que foi vendido, pago ou pendente', 'indigo'],
+    ['Total recebido', yearReceived, 'Dinheiro que realmente entrou', 'emerald'],
+    ['Total a receber', yearPending, 'Fiados que ainda estão pendentes', 'amber'],
+    ['Compras para o estoque', yearStockPurchases, 'Valor pago em ingredientes e embalagens', 'rose'],
+    ['Custo da produção', yearProductionCost, 'Custo dos lotes produzidos no ano', 'orange'],
+    ['Valor atual do estoque', inventoryValue, 'Estimativa do que ainda está no Depósito', 'teal'],
+    ['Lucro previsto nas vendas', yearExpectedProfit, 'Faturamento menos custo dos potes vendidos', 'purple'],
+    ['Saldo de caixa', yearCashBalance, 'Recebido menos compras para o estoque', 'slate'],
+  ] as const;
+
+  const monthCards = [
+    ['Faturamento', monthRevenue, `${monthSoldUnits} potes em ${monthSales.length} pedidos`, 'indigo'],
+    ['Total recebido', monthReceived, 'Dinheiro que já entrou no mês', 'emerald'],
+    ['Total a receber', monthPending, 'Saldo de vendas pendentes', 'amber'],
+    ['Custo vendido', monthSoldCost, 'Custo dos potes que foram vendidos', 'rose'],
+    ['Lucro previsto', monthExpectedProfit, 'Faturamento menos custo dos potes vendidos', 'purple'],
+    ['Compras de estoque', monthStockPurchases, 'Dinheiro gasto para abastecer o Depósito', 'orange'],
+    ['Saldo de caixa', monthCashBalance, 'Recebido menos compras feitas no mês', 'slate'],
+    ['Produção', monthProducedUnits, 'Quantidade de potes produzidos no mês', 'teal'],
+  ] as const;
+
+  const cardClass: Record<string, string> = {
+    indigo: 'bg-indigo-50 border-indigo-200 text-indigo-900', emerald: 'bg-emerald-50 border-emerald-200 text-emerald-900',
+    amber: 'bg-amber-50 border-amber-200 text-amber-900', rose: 'bg-rose-50 border-rose-200 text-rose-900',
+    orange: 'bg-orange-50 border-orange-200 text-orange-900', teal: 'bg-teal-50 border-teal-200 text-teal-900',
+    purple: 'bg-purple-50 border-purple-200 text-purple-900', slate: 'bg-slate-50 border-slate-200 text-slate-900',
   };
 
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-8 pb-24 overflow-x-hidden">
-      {/* SECTION 1: CAIXA ANUAL */}
-      <div className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
+      <section className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2 text-indigo-800 font-extrabold text-lg">
-            <TrendingUp className="w-5 h-5 text-indigo-600" />
-            <span>Caixa Anual</span>
-          </div>
-          <span className="text-xs font-bold bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1 rounded-full">
-            Visão Consolidada do Ano
-          </span>
+          <div className="flex items-center gap-2 text-indigo-800 font-extrabold text-lg"><TrendingUp className="w-5 h-5" /> Caixa anual — {selectedYear}</div>
+          <span className="text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1 rounded-full">Valores separados por finalidade</span>
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-emerald-50 border border-emerald-200 p-5 rounded-2xl space-y-1">
-            <div className="text-xs font-bold uppercase text-emerald-800 tracking-wider">
-              Receita Total Recebida
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {yearCards.map(([label, value, help, tone]) => (
+            <div key={label} className={`border p-4 rounded-2xl space-y-1 ${cardClass[tone]}`}>
+              <div className="text-[10px] font-black uppercase tracking-wider">{label}</div>
+              <div className="text-2xl font-black font-mono">{formatCurrency(value)}</div>
+              <p className="text-[10px] opacity-80 font-medium">{help}</p>
             </div>
-            <div className="text-3xl font-black text-emerald-700 font-mono">
-              {formatCurrency(totalCumulativeReceived)}
-            </div>
-            <div className="text-[11px] text-emerald-700 font-medium">
-              Soma de todas as entradas quitadas
-            </div>
-          </div>
-
-          <div className="bg-rose-50 border border-rose-200 p-5 rounded-2xl space-y-1">
-            <div className="text-xs font-bold uppercase text-rose-800 tracking-wider">
-              Despesas / Produção Acumulada
-            </div>
-            <div className="text-3xl font-black text-rose-700 font-mono">
-              {formatCurrency(totalCumulativeExpenses)}
-            </div>
-            <div className="text-[11px] text-rose-700 font-medium">
-              Soma de todos os custos de produção
-            </div>
-          </div>
-
-          <div className="bg-purple-50 border border-purple-200 p-5 rounded-2xl space-y-1">
-            <div className="text-xs font-bold uppercase text-purple-800 tracking-wider">
-              Lucro Acumulado Total
-            </div>
-            <div className="text-3xl font-black text-purple-800 font-mono">
-              {formatCurrency(totalCumulativeProfit)}
-            </div>
-            <div className="text-[11px] text-purple-700 font-medium">
-              Lucro consolidado total do negócio
-            </div>
-          </div>
+          ))}
         </div>
-      </div>
+      </section>
 
-      {/* SECTION 2: CAIXA DO MÊS CORRENTE */}
-      <div className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
+      <section className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-purple-700 font-bold text-xs uppercase tracking-wider">
-              <Calendar className="w-4 h-4 text-purple-600" />
-              <span>Visão Mensal Integrada</span>
-            </div>
-            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Caixa de {formatMonthShort(currentMonthKey)}
-            </h3>
-          </div>
-
-          {/* Calendário/Picker desde Janeiro de 2026 */}
+          <div><span className="flex items-center gap-2 text-purple-700 font-bold text-xs uppercase"><Calendar className="w-4 h-4" /> Visão mensal</span><h3 className="text-2xl font-black text-slate-900 mt-1">Caixa de {formatMonthShort(currentMonthKey)}</h3></div>
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-1.5 rounded-2xl">
-            <button
-              type="button"
-              onClick={handlePrevMonth}
-              className="p-2 hover:bg-white text-slate-600 rounded-xl transition-colors cursor-pointer"
-              title="Mês Anterior"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-
-            <select
-              value={currentMonthKey}
-              onChange={(e) => setCurrentMonthKey(e.target.value)}
-              className="bg-transparent font-black text-sm text-purple-900 px-2 py-1 focus:outline-none cursor-pointer"
-            >
-              {monthOptions.map((m) => (
-                <option key={m.key} value={m.key}>
-                  {m.label}
-                </option>
-              ))}
+            <button type="button" onClick={() => moveMonth(-1)} className="p-2 hover:bg-white rounded-xl"><ChevronLeft className="w-4 h-4" /></button>
+            <select value={currentMonthKey} onChange={(event) => setCurrentMonthKey(event.target.value)} className="bg-transparent font-black text-sm text-purple-900 px-2 py-1 focus:outline-none">
+              {monthOptions.map((month) => <option key={month.key} value={month.key}>{month.label}</option>)}
             </select>
-
-            <button
-              type="button"
-              onClick={handleNextMonth}
-              className="p-2 hover:bg-white text-slate-600 rounded-xl transition-colors cursor-pointer"
-              title="Próximo Mês"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
+            <button type="button" onClick={() => moveMonth(1)} className="p-2 hover:bg-white rounded-xl"><ChevronRight className="w-4 h-4" /></button>
           </div>
         </div>
 
-        {/* RESUMO DO CAIXA DO MÊS COM OS 4 INDICADORES SOLICITADOS */}
-        <div className="space-y-4">
-          <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
-            Resumo do Caixa de {formatMonthShort(currentMonthKey)}:
-          </h4>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* 1. Gasto com produção */}
-            <div className="bg-rose-50 border-2 border-rose-200 p-5 rounded-2xl space-y-2">
-              <div className="text-xs font-bold uppercase text-rose-800 tracking-wider">
-                1. Gasto com Produção
-              </div>
-              <div className="text-2xl font-black text-rose-950 font-mono">
-                {formatCurrency(gastoProducaoMonth)}
-              </div>
-              <p className="text-[11px] text-rose-700 font-medium">
-                Custo dos insumos calculado pelo Depósito e pelo Livro de Receitas.
-              </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {monthCards.map(([label, value, help, tone]) => (
+            <div key={label} className={`border p-4 rounded-2xl space-y-1 ${cardClass[tone]}`}>
+              <div className="text-[10px] font-black uppercase tracking-wider">{label}</div>
+              <div className="text-2xl font-black font-mono">{label === 'Produção' ? `${value} potes` : formatCurrency(value)}</div>
+              <p className="text-[10px] opacity-80 font-medium">{help}</p>
             </div>
-
-            {/* 2. Total recebido */}
-            <div className="bg-emerald-50 border-2 border-emerald-200 p-5 rounded-2xl space-y-2">
-              <div className="text-xs font-bold uppercase text-emerald-800 tracking-wider">
-                2. Total Recebido
-              </div>
-              <div className="text-2xl font-black text-emerald-950 font-mono">
-                {formatCurrency(totalRecebidoMonth)}
-              </div>
-              <p className="text-[11px] text-emerald-700 font-medium">
-                Soma de vendas pagas no ato e quitações de cobrança do mês.
-              </p>
-            </div>
-
-            {/* 3. Total a receber */}
-            <div className="bg-amber-50 border-2 border-amber-200 p-5 rounded-2xl space-y-2">
-              <div className="text-xs font-bold uppercase text-amber-800 tracking-wider">
-                3. Total a Receber
-              </div>
-              <div className="text-2xl font-black text-amber-950 font-mono">
-                {formatCurrency(totalAReceberMonth)}
-              </div>
-              <p className="text-[11px] text-amber-700 font-medium">
-                Saldo pendente em fiado a cobrar dos clientes no mês.
-              </p>
-            </div>
-
-            {/* 4. Lucro */}
-            <div className="bg-purple-50 border-2 border-purple-300 p-5 rounded-2xl space-y-2">
-              <div className="text-xs font-bold uppercase text-purple-800 tracking-wider">
-                4. Lucro do Mês
-              </div>
-              <div className="text-2xl font-black text-purple-950 font-mono">
-                {formatCurrency(lucroMonth)}
-              </div>
-              <p className="text-[11px] text-purple-700 font-medium">
-                Resultado líquido (Total recebido menos gasto com produção).
-              </p>
-            </div>
-          </div>
+          ))}
         </div>
 
         <div className="cash-chart-card">
           <div className="cash-chart-card__heading">
-            <div>
-              <span><BarChart3 className="w-4 h-4" /> Evolução do mês</span>
-              <h4>Faturamento e margem por semana</h4>
-            </div>
-            <div className="cash-chart-legend">
-              <span><i className="cash-chart-dot cash-chart-dot--revenue" /> Faturamento</span>
-              <span><i className="cash-chart-dot cash-chart-dot--profit" /> Após produção</span>
-            </div>
+            <div><span><BarChart3 className="w-4 h-4" /> Movimentação financeira</span><h4>Vendido e recebido por semana</h4></div>
+            <div className="cash-chart-legend"><span><i className="cash-chart-dot cash-chart-dot--revenue" /> Vendido</span><span><i className="cash-chart-dot cash-chart-dot--profit" /> Recebido</span></div>
           </div>
-
-          <div className="cash-chart" role="img" aria-label="Gráfico semanal de faturamento e margem após os custos de produção">
+          <div className="cash-chart" role="img" aria-label="Gráfico semanal dos valores vendidos e recebidos">
             {weeklyChart.map((week) => (
               <div className="cash-chart-week" key={week.label}>
+                <div className="cash-chart-values"><span>{week.faturamento ? formatCurrency(week.faturamento) : '—'}</span><span>{week.recebido ? formatCurrency(week.recebido) : '—'}</span></div>
                 <div className="cash-chart-bars">
-                  <span
-                    className="cash-chart-bar cash-chart-bar--revenue"
-                    style={{ height: `${Math.max(3, (week.revenue / graphMaximum) * 100)}%` }}
-                    title={`Faturamento: ${formatCurrency(week.revenue)}`}
-                  />
-                  <span
-                    className="cash-chart-bar cash-chart-bar--profit"
-                    style={{ height: `${Math.max(3, (week.profit / graphMaximum) * 100)}%` }}
-                    title={`Após produção: ${formatCurrency(week.profit)}`}
-                  />
+                  <span className="cash-chart-bar cash-chart-bar--revenue" style={{ height: week.faturamento ? `${(week.faturamento / graphMaximum) * 100}%` : '0' }} title={`Vendido: ${formatCurrency(week.faturamento)}`} />
+                  <span className="cash-chart-bar cash-chart-bar--profit" style={{ height: week.recebido ? `${(week.recebido / graphMaximum) * 100}%` : '0' }} title={`Recebido: ${formatCurrency(week.recebido)}`} />
                 </div>
                 <strong>{week.label}</strong>
               </div>
             ))}
           </div>
-          <p className="cash-chart-caption">Dias do mês · toque ou passe o mouse nas barras para ver os valores</p>
+          <p className="cash-chart-caption">Cada grupo representa os dias do mês. Roxo = vendido; verde = dinheiro recebido.</p>
         </div>
-      </div>
+      </section>
     </div>
   );
 };
