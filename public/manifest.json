@@ -1,6 +1,6 @@
 {
-  "short_name": "Mari Simas",
-  "name": "Mari Simas Doces - Gestão de Pote",
+  "short_name": "Doces da Mari",
+  "name": "Doces da Mari - Produção, Vendas e Caixa",
   "icons": [
     {
       "src": "/pwa-192.png",
@@ -28,8 +28,8 @@
     }
   ],
   "start_url": "/",
-  "background_color": "#ffffff",
-  "theme_color": "#8b5cf6",
+  "background_color": "#fffaf5",
+  "theme_color": "#df3269",
   "display": "standalone",
   "orientation": "portrait"
 }

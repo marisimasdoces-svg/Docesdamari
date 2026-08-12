@@ -1,7 +1,12 @@
 import { AppState } from '../types';
 
 const todayISO = new Date().toISOString();
-const todayDate = todayISO.slice(0, 10);
+const todayDate = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+}).format(new Date());
 
 export const INITIAL_STATE: AppState = {
   users: [
@@ -60,6 +65,7 @@ export const INITIAL_STATE: AppState = {
   ],
   sales: [],
   payments: [],
+  utilitySettings: [],
   inventory: [
     {
       id: 'inv-1',

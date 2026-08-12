@@ -44,6 +44,10 @@ export interface ProductionBatch {
   totalProduced: number;
   totalSold: number;
   unitPrice: number;
+  recipeId?: string;
+  productionCost?: number; // custo total real/snapshot do lote produzido
+  unitCost?: number; // custo por pote no momento da producao
+  ingredientsUsed?: RecipeIngredient[]; // quantidades efetivamente baixadas do deposito
   notes?: string;
   status: 'active' | 'closed';
   createdAt: string;
@@ -146,6 +150,18 @@ export interface BatchExpense {
   deletedAt?: string;
 }
 
+export interface UtilitySettings {
+  id: string;
+  referenceMonth: string;
+  gasCylinderPrice: number;
+  electricityBill: number;
+  electricityKwh: number;
+  waterBill: number;
+  productionCycles: number;
+  updatedAt: string;
+  deletedAt?: string;
+}
+
 export interface AppState {
   users: User[];
   currentUser: User | null;
@@ -157,6 +173,7 @@ export interface AppState {
   inventory: InventoryItem[];
   recipes: Recipe[];
   expenses: BatchExpense[];
+  utilitySettings: UtilitySettings[];
   departments: string[];
   tombstones?: Record<string, string>; // { [entityId]: ISO_Timestamp_When_Deleted }
   lastUpdated?: string;

@@ -1,8 +1,9 @@
-const CACHE_NAME = 'marisimas-doces-v5';
+const CACHE_NAME = 'doces-da-mari-v6';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/doces-da-mari-logo.png',
   '/apple-touch-icon.png',
   '/apple-touch-icon-precomposed.png',
   '/icon.png',
@@ -40,6 +41,10 @@ self.addEventListener('fetch', (event) => {
   
   const url = new URL(event.request.url);
 
+  // Firebase, Google Fonts and WhatsApp must use the browser network stack
+  // directly. Caching cross-origin requests can interrupt Firestore streams.
+  if (url.origin !== self.location.origin) return;
+
   // For HTML page navigation, ALWAYS network first with cache fallback
   if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('.html')) {
     event.respondWith(
@@ -53,8 +58,13 @@ self.addEventListener('fetch', (event) => {
           }
           return networkResponse;
         })
-        .catch(() => {
-          return caches.match('/index.html') || caches.match(event.request);
+        .catch(async () => {
+          const cachedPage = await caches.match('/index.html');
+          const cachedRequest = await caches.match(event.request);
+          return cachedPage || cachedRequest || new Response('Aplicativo offline', {
+            status: 503,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+          });
         })
     );
     return;
@@ -72,8 +82,9 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       })
-      .catch(() => {
-        return caches.match(event.request);
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        return cached || new Response('', { status: 504, statusText: 'Offline' });
       })
   );
 });
