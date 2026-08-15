@@ -64,11 +64,20 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, selectedMonth
   }, 0);
   const yearProductionCost = yearRecordedProductionCost + yearLegacyProductionCost;
   const yearExpectedProfit = yearRevenue - yearSoldCost;
-  const yearCashBalance = yearReceived - yearStockPurchases;
+
+  // Nova lógica de caixa:
+  // O dinheiro que permanece na conta do negócio é tratado como lucro acumulado disponível.
+  // Compras de estoque são saídas de caixa, mas o que ainda existe no depósito continua sendo patrimônio.
+  const allReceived = receivedFromSales(state.sales) + state.payments.reduce((total, payment) => total + payment.amountPaid, 0);
+  const allStockPurchases = state.expenses.reduce((total, expense) => total + expense.totalCost, 0);
+  const accumulatedAvailableProfit = allReceived - allStockPurchases;
+
   const inventoryValue = state.inventory.reduce((total, item) => {
     const unitCost = item.totalQuantityBought > 0 ? item.totalCostPaid / item.totalQuantityBought : item.unitCost;
     return total + item.remainingQuantity * unitCost;
   }, 0);
+
+  const businessPatrimony = accumulatedAvailableProfit + inventoryValue;
 
   const monthSales = state.sales.filter((sale) => sale.monthKey === currentMonthKey);
   const monthPayments = state.payments.filter((payment) => payment.monthKey === currentMonthKey);
@@ -80,7 +89,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, selectedMonth
   const monthStockPurchases = monthPurchases.reduce((total, expense) => total + expense.totalCost, 0);
   const monthSoldCost = monthSales.reduce((total, sale) => total + saleCost(state, sale), 0);
   const monthExpectedProfit = monthRevenue - monthSoldCost;
-  const monthCashBalance = monthReceived - monthStockPurchases;
+  const monthCashMovement = monthReceived - monthStockPurchases;
   const monthProducedUnits = monthBatches.reduce((total, batch) => total + batch.totalProduced, 0);
   const monthSoldUnits = monthSales.reduce((total, sale) => total + sale.quantity, 0);
 
@@ -106,14 +115,14 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, selectedMonth
   };
 
   const yearCards = [
-    ['Faturamento', yearRevenue, 'Tudo que foi vendido, pago ou pendente', 'indigo'],
-    ['Total recebido', yearReceived, 'Dinheiro que realmente entrou', 'emerald'],
-    ['Total a receber', yearPending, 'Fiados que ainda estão pendentes', 'amber'],
-    ['Compras para o estoque', yearStockPurchases, 'Valor pago em ingredientes e embalagens', 'rose'],
+    ['Faturamento', yearRevenue, 'Tudo que foi vendido no ano, pago ou pendente', 'indigo'],
+    ['Total recebido', yearReceived, 'Dinheiro que realmente entrou no ano', 'emerald'],
+    ['Total a receber', yearPending, 'Fiados do ano que ainda estão pendentes', 'amber'],
+    ['Compras para o estoque', yearStockPurchases, 'Valor pago em ingredientes e embalagens no ano', 'rose'],
     ['Custo da produção', yearProductionCost, 'Custo dos lotes produzidos no ano', 'orange'],
-    ['Valor atual do estoque', inventoryValue, 'Estimativa do que ainda está no Depósito', 'teal'],
     ['Lucro previsto nas vendas', yearExpectedProfit, 'Faturamento menos custo dos potes vendidos', 'purple'],
-    ['Saldo de caixa', yearCashBalance, 'Recebido menos compras para o estoque', 'slate'],
+    ['Lucro acumulado disponível', accumulatedAvailableProfit, 'Dinheiro acumulado na conta após as compras de estoque registradas', 'slate'],
+    ['Patrimônio do negócio', businessPatrimony, 'Lucro disponível + valor atual estimado do estoque', 'teal'],
   ] as const;
 
   const monthCards = [
@@ -123,7 +132,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, selectedMonth
     ['Custo vendido', monthSoldCost, 'Custo dos potes que foram vendidos', 'rose'],
     ['Lucro previsto', monthExpectedProfit, 'Faturamento menos custo dos potes vendidos', 'purple'],
     ['Compras de estoque', monthStockPurchases, 'Dinheiro gasto para abastecer o Depósito', 'orange'],
-    ['Saldo de caixa', monthCashBalance, 'Recebido menos compras feitas no mês', 'slate'],
+    ['Movimento líquido do mês', monthCashMovement, 'Recebido no mês menos compras de estoque do mês', 'slate'],
     ['Produção', monthProducedUnits, 'Quantidade de potes produzidos no mês', 'teal'],
   ] as const;
 
@@ -139,7 +148,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, selectedMonth
       <section className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2 text-indigo-800 font-extrabold text-lg"><TrendingUp className="w-5 h-5" /> Caixa anual — {selectedYear}</div>
-          <span className="text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1 rounded-full">Valores separados por finalidade</span>
+          <span className="text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1 rounded-full">Caixa e patrimônio separados</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {yearCards.map(([label, value, help, tone]) => (
@@ -149,6 +158,11 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, selectedMonth
               <p className="text-[10px] opacity-80 font-medium">{help}</p>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-950">
+          <strong>Leitura do patrimônio:</strong> o dinheiro que permanece na conta aparece como <strong>lucro acumulado disponível</strong>.
+          O que ainda existe no Depósito continua sendo patrimônio e aparece somado apenas no card <strong>Patrimônio do negócio</strong>.
         </div>
       </section>
 
