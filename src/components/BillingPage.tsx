@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AppState, Buyer, PaymentRecord, Sale, User } from '../types';
 import { formatCurrency, formatDateBR, formatMonthShort } from '../lib/storage';
+import { applyReadyStockDelta, saoPauloDateKey } from '../lib/readyStock';
 import confetti from 'canvas-confetti';
 import {
   Receipt,
@@ -261,11 +262,26 @@ export const BillingPage: React.FC<BillingPageProps> = ({
           : payment;
       });
 
+      const stockToReturn = sum.salesList.reduce(
+        (total, sale) => total + Math.max(0, sale.readyStockMovementQuantity ?? 0),
+        0,
+      );
+      const soldTodayToReverse = sum.salesList.reduce(
+        (total, sale) => total + Math.max(0, sale.readyStockDailyMovements?.[saoPauloDateKey(nowIso)] ?? 0),
+        0,
+      );
+
       const newState: AppState = {
         ...state,
         sales: updatedSales,
         payments: updatedPayments,
         batches: updatedBatches,
+        utilitySettings: applyReadyStockDelta(
+          state.utilitySettings,
+          stockToReturn,
+          nowIso,
+          -soldTodayToReverse,
+        ),
       };
 
       onStateChange(newState);
@@ -290,10 +306,18 @@ export const BillingPage: React.FC<BillingPageProps> = ({
         return b;
       });
 
+      const stockToReturn = Math.max(0, sale.readyStockMovementQuantity ?? 0);
+      const soldTodayToReverse = Math.max(0, sale.readyStockDailyMovements?.[saoPauloDateKey(nowIso)] ?? 0);
       const newState: AppState = {
         ...state,
         sales: updatedSales,
         batches: updatedBatches,
+        utilitySettings: applyReadyStockDelta(
+          state.utilitySettings,
+          stockToReturn,
+          nowIso,
+          -soldTodayToReverse,
+        ),
       };
 
       onStateChange(newState);

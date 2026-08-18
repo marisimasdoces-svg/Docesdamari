@@ -18,7 +18,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { PixPaymentModal } from './PixPaymentModal';
-import { applyReadyStockDelta, getAvailableReadyStock, reconcileReadyStockBatches } from '../lib/readyStock';
+import { addSaleDailyMovement, applyReadyStockDelta, getAvailableReadyStock, reconcileReadyStockBatches, saoPauloDateKey } from '../lib/readyStock';
 
 interface SalesPageProps {
   state: AppState;
@@ -279,6 +279,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       estimatedUnitCost: saleUnitCost,
       batchAllocations: allocation.allocations,
       readyStockMovementQuantity: quantity,
+      readyStockDailyMovements: { [saoPauloDateKey(nowIso)]: quantity },
     };
 
     const newState: AppState = {
@@ -286,7 +287,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       buyers: updatedBuyers,
       sales: [newSale, ...state.sales],
       batches: updatedBatches,
-      utilitySettings: applyReadyStockDelta(state.utilitySettings, -quantity, nowIso),
+      utilitySettings: applyReadyStockDelta(state.utilitySettings, -quantity, nowIso, quantity),
     };
 
     onStateChange(newState);
@@ -332,6 +333,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
               state.utilitySettings,
               Math.max(0, sale.readyStockMovementQuantity ?? 0),
               nowIso,
+              -Math.max(0, sale.readyStockDailyMovements?.[saoPauloDateKey(nowIso)] ?? 0),
             ),
       };
 
@@ -365,19 +367,25 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       : [{ batchId: editingSale.batchId, quantity: editingSale.quantity }];
 
     if (qtyDiff > 0) {
-      const allocation = allocateReadyStock(updatedBatches, editingSale.sweetId, editingSale.sweetName, qtyDiff);
-      if (!allocation.ok) {
-        const availableNow = updatedBatches
-          .filter((b) => b.status === 'active' && (b.sweetId === editingSale.sweetId || b.sweetName.toLowerCase() === editingSale.sweetName.toLowerCase()))
-          .reduce((sum, b) => sum + Math.max(0, b.totalProduced - b.totalSold), 0);
-        alert(`Não há doces suficientes para aumentar esta venda. Disponível para acrescentar: ${availableNow}.`);
+      // O estoque físico persistente é a fonte de verdade. Lotes antigos passaram
+      // por versões diferentes e não podem impedir a recompra de um cliente.
+      const physicalAvailable = getAvailableReadyStock(state.batches, state.sales, state.utilitySettings);
+      if (qtyDiff > physicalAvailable) {
+        alert(`Estoque insuficiente. Disponível para acrescentar: ${physicalAvailable} potes.`);
         return;
       }
-      updatedBatches = allocation.batches;
-      allocation.allocations.forEach((extra) => {
-        const existing = nextAllocations.find((item) => item.batchId === extra.batchId);
-        if (existing) existing.quantity += extra.quantity; else nextAllocations.push(extra);
-      });
+
+      // Mantemos a alocação de lotes apenas como informação auxiliar/custo.
+      // Se o histórico de lotes estiver inconsistente, a venda continua válida
+      // e o contador físico é atualizado corretamente.
+      const allocation = allocateReadyStock(updatedBatches, editingSale.sweetId, editingSale.sweetName, qtyDiff);
+      if (allocation.ok) {
+        updatedBatches = allocation.batches;
+        allocation.allocations.forEach((extra) => {
+          const existing = nextAllocations.find((item) => item.batchId === extra.batchId);
+          if (existing) existing.quantity += extra.quantity; else nextAllocations.push(extra);
+        });
+      }
     } else if (qtyDiff < 0) {
       let toReturn = Math.abs(qtyDiff);
       const returnedByBatch = new Map<string, number>();
@@ -407,7 +415,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           paymentDate: isNowPaid ? (s.paymentDate || nowIso) : undefined,
           batchId: nextAllocations[0]?.batchId || s.batchId,
           batchAllocations: nextAllocations,
-          readyStockMovementQuantity: (s.readyStockMovementQuantity || 0) + qtyDiff,
+          readyStockMovementQuantity: Math.max(0, (s.readyStockMovementQuantity || 0) + qtyDiff),
+          readyStockDailyMovements: addSaleDailyMovement(s.readyStockDailyMovements, nowIso, qtyDiff),
           updatedAt: nowIso,
         };
       }
@@ -418,7 +427,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       ...state,
       sales: updatedSales,
       batches: updatedBatches,
-      utilitySettings: applyReadyStockDelta(state.utilitySettings, -qtyDiff, nowIso),
+      utilitySettings: applyReadyStockDelta(state.utilitySettings, -qtyDiff, nowIso, qtyDiff),
     };
 
     onStateChange(newState);

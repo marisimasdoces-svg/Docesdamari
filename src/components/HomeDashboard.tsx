@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { AppState, User } from '../types';
 import { formatCurrency, formatMonthShort } from '../lib/storage';
-import { getAvailableReadyStock } from '../lib/readyStock';
+import { getAvailableReadyStock, getReadyStockSoldToday } from '../lib/readyStock';
 import { TabType } from './Navigation';
 
 interface HomeDashboardProps {
@@ -54,9 +54,10 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   const salesInMonth = state.sales.filter(
     (sale) => sale.monthKey === selectedMonth || saoPauloDateKey(sale.saleDate).startsWith(selectedMonth)
   );
-  const salesToday = state.sales.filter((sale) => saoPauloDateKey(sale.saleDate) === todayKey);
   const availableReadyStock = getAvailableReadyStock(state.batches, state.sales, state.utilitySettings);
-  const soldToday = salesToday.reduce((total, sale) => total + (sale.quantity || 0), 0);
+  // 'Vendidos hoje' é operacional: inclui novas vendas e aumentos feitos hoje
+  // em vendas antigas, sem alterar a data original do pedido.
+  const soldToday = getReadyStockSoldToday(state.utilitySettings, now);
 
   const grossMonth = salesInMonth.reduce((total, sale) => total + (sale.totalPrice || 0), 0);
   const unitsSoldInMonth = salesInMonth.reduce((total, sale) => total + (sale.quantity || 0), 0);

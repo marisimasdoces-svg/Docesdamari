@@ -15,6 +15,7 @@ import { HomeDashboard } from './components/HomeDashboard';
 import { FeaturePanel } from './components/FeaturePanel';
 import { Boxes, ShoppingBag, ReceiptText, WalletCards } from 'lucide-react';
 import { signOutFromFirebase, waitForFirebaseAuth } from './lib/firebase';
+import { ensureReadyStockLedgerBaseline, READY_STOCK_LEDGER_VERSION } from './lib/readyStock';
 
 const SalesPage = lazy(() => import('./components/SalesPage').then((module) => ({ default: module.SalesPage })));
 const BillingPage = lazy(() => import('./components/BillingPage').then((module) => ({ default: module.BillingPage })));
@@ -63,6 +64,20 @@ export default function App() {
   const [view, setView] = useState<'splash' | 'login' | 'main'>('splash');
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthKey());
+
+  // Correção única e não destrutiva do estoque operacional em 18/08/2026.
+  // O usuário confirmou: 13 potes no início do dia, 8 vendidos, 5 disponíveis.
+  // Depois deste marco, todos os eventos atualizam os contadores diretamente.
+  useEffect(() => {
+    if (!appState.currentUser) return;
+    const financial = appState.utilitySettings?.find((item) => item.id === 'financial-settings');
+    if (financial?.readyStockLedgerVersion === READY_STOCK_LEDGER_VERSION) return;
+
+    const correctedSettings = ensureReadyStockLedgerBaseline(appState.utilitySettings || []);
+    const correctedState: AppState = { ...appState, utilitySettings: correctedSettings };
+    saveState(correctedState);
+    setAppState(stripDeletedRecords(correctedState));
+  }, [appState.currentUser?.id, appState.utilitySettings]);
 
   // Firestore starts only after Firebase has restored an authenticated user.
   useEffect(() => {
