@@ -15,7 +15,9 @@ import {
   Settings,
   Building2,
   Edit2,
+  QrCode,
 } from 'lucide-react';
+import { PixPaymentModal } from './PixPaymentModal';
 
 interface SalesPageProps {
   state: AppState;
@@ -67,6 +69,12 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   const [editQuantity, setEditQuantity] = useState<number>(1);
   const [editUnitPrice, setEditUnitPrice] = useState<number>(13.0);
   const [editStatus, setEditStatus] = useState<'paid' | 'pending'>('pending');
+  const [pixSale, setPixSale] = useState<Sale | null>(null);
+
+  const financialSettings = state.utilitySettings?.find((item) => item.id === 'financial-settings');
+  const pixKey = financialSettings?.pixKey || 'mdamerso@hotmail.com';
+  const pixRecipientName = financialSettings?.pixRecipientName || 'Mariane Simas';
+  const pixCity = financialSettings?.pixCity || 'SANTANA LIVRAM';
 
   // Submit Retroactive Sale
   const handleRegisterRetroactiveSale = (e: React.FormEvent) => {
@@ -139,13 +147,36 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     alert(`🎉 Venda retroativa de ${qty}x ${retroSweetName} (R$ ${totalPrice.toFixed(2)}) cadastrada com sucesso e contabilizada no lucro!`);
   };
 
-  // Active production batch & sweets stock
+  // Estoque de doces prontos: permanente e somado em todos os lotes ativos do doce.
   const activeBatches = state.batches.filter((b) => b.status === 'active');
-  const activeBatch = activeBatches[0] || state.batches[0];
-
   const selectedSweet = state.sweets.find((s) => s.id === selectedSweetId) || state.sweets[0];
-  const sweetBatch = state.batches.find((b) => b.sweetId === selectedSweetId && b.status === 'active') || activeBatch;
-  const sweetStockRemaining = sweetBatch ? Math.max(0, sweetBatch.totalProduced - sweetBatch.totalSold) : 0;
+  const batchesForSelectedSweet = activeBatches
+    .filter((b) => selectedSweet && (b.sweetId === selectedSweet.id || b.sweetName.toLowerCase() === selectedSweet.name.toLowerCase()))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const sweetStockRemaining = batchesForSelectedSweet.reduce(
+    (total, batch) => total + Math.max(0, batch.totalProduced - batch.totalSold), 0
+  );
+
+  const allocateReadyStock = (batches: typeof state.batches, sweetId: string, sweetName: string, quantity: number) => {
+    let remaining = quantity;
+    const allocations: Array<{ batchId: string; quantity: number }> = [];
+    let weightedCost = 0;
+    const eligible = batches
+      .filter((b) => b.status === 'active' && (b.sweetId === sweetId || b.sweetName.toLowerCase() === sweetName.toLowerCase()))
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const updated = batches.map((batch) => {
+      const eligibleBatch = eligible.find((item) => item.id === batch.id);
+      if (!eligibleBatch || remaining <= 0) return batch;
+      const available = Math.max(0, batch.totalProduced - batch.totalSold);
+      const take = Math.min(available, remaining);
+      if (take <= 0) return batch;
+      remaining -= take;
+      allocations.push({ batchId: batch.id, quantity: take });
+      weightedCost += take * (batch.unitCost || 0);
+      return { ...batch, totalSold: batch.totalSold + take, updatedAt: new Date().toISOString() };
+    });
+    return { ok: remaining === 0, batches: updated, allocations, unitCost: quantity > 0 ? weightedCost / quantity : 0 };
+  };
 
   // Handle buyer dropdown select
   const handleSelectBuyerChange = (buyerId: string) => {
@@ -196,49 +227,25 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     const quantity = Number(saleQuantity);
     const totalPrice = quantity * unitPrice;
 
-    let targetBatch = sweetBatch;
-    let updatedBatches = [...state.batches];
-    let saleUnitCost: number | undefined;
-
-    if (targetBatch && updatedBatches.some((b) => b.id === targetBatch!.id)) {
-      updatedBatches = updatedBatches.map((b) => {
-        if (b.id === targetBatch!.id) {
-          saleUnitCost = typeof b.unitCost === 'number' ? b.unitCost : undefined;
-          return { ...b, totalSold: b.totalSold + quantity, updatedAt: nowIso };
-        }
-        return b;
-      });
-    } else {
-      // Create auto active batch for this sweet if none exists in state.batches
-      const recipe = state.recipes.find(
-        (r) => (sweet && r.sweetId === sweet.id) || (sweet && r.sweetName.toLowerCase() === sweet.name.toLowerCase())
-      );
-      const totalProduced = recipe ? recipe.yieldsCount : Math.max(quantity, 20);
-      const newAutoBatch = {
-        id: `batch-auto-${Date.now()}`,
-        sweetId: sweet ? sweet.id : `sweet-${Date.now()}`,
-        sweetName: sweet ? sweet.name : 'Bolo de Pote',
-        totalProduced,
-        totalSold: quantity,
-        unitPrice,
-        startDate: getSaoPauloDateKey(),
-        endDate: getSaoPauloDateKey(),
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        weekLabel: 'Semana Atual',
-        status: 'active' as const,
-      };
-      updatedBatches = [newAutoBatch, ...updatedBatches];
-      targetBatch = newAutoBatch;
+    if (!sweet) {
+      alert('Cadastre um doce antes de registrar a venda.');
+      return;
+    }
+    if (quantity > sweetStockRemaining) {
+      alert(`Estoque insuficiente de ${sweet.name}. Disponível agora: ${sweetStockRemaining} potes.`);
+      return;
     }
 
-    if (typeof saleUnitCost !== 'number') {
-      const linkedRecipe = state.recipes.find(
-        (recipe) => (sweet && recipe.sweetId === sweet.id) || (sweet && recipe.sweetName.toLowerCase() === sweet.name.toLowerCase())
-      );
-      saleUnitCost = linkedRecipe?.calculatedUnitCost;
+    const allocation = allocateReadyStock(state.batches, sweet.id, sweet.name, quantity);
+    if (!allocation.ok) {
+      alert('Não foi possível reservar os potes nos lotes disponíveis. Atualize a tela e tente novamente.');
+      return;
     }
-
+    const updatedBatches = allocation.batches;
+    const saleUnitCost = allocation.unitCost || state.recipes.find(
+      (recipe) => recipe.sweetId === sweet.id || recipe.sweetName.toLowerCase() === sweet.name.toLowerCase()
+    )?.calculatedUnitCost;
+    const targetBatchId = allocation.allocations[0]?.batchId || 'batch-default';
     const newSale: Sale = {
       id: `sale-${Date.now()}`,
       buyerId: buyer.id,
@@ -246,14 +253,14 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       department: buyerDept,
       sweetId: sweet ? sweet.id : 'sweet-default',
       sweetName: sweet ? sweet.name : 'Bolo de Pote',
-      batchId: targetBatch ? targetBatch.id : 'batch-default',
+      batchId: targetBatchId,
       quantity,
       unitPrice,
       totalPrice,
       saleDate: nowIso,
       updatedAt: nowIso,
       monthKey: selectedMonth,
-      weekLabel: targetBatch ? targetBatch.weekLabel : 'Semana Atual',
+      weekLabel: state.batches.find((b) => b.id === targetBatchId)?.weekLabel || 'Semana Atual',
       isPaidImmediately: isPaid,
       paymentStatus: isPaid ? 'paid' : 'pending',
       paymentDate: isPaid ? nowIso : undefined,
@@ -261,6 +268,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       registeredBy: currentUser.name,
       notes: saleNotes.trim(),
       estimatedUnitCost: saleUnitCost,
+      batchAllocations: allocation.allocations,
     };
 
     const newState: AppState = {
@@ -292,11 +300,10 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       const updatedSales = state.sales.map((item) =>
         item.id === saleId ? { ...item, deletedAt: nowIso, updatedAt: nowIso } : item
       );
+      const allocations = sale.batchAllocations?.length ? sale.batchAllocations : [{ batchId: sale.batchId, quantity: sale.quantity }];
       const updatedBatches = state.batches.map((b) => {
-        if (b.id === sale.batchId) {
-          return { ...b, totalSold: Math.max(0, b.totalSold - sale.quantity), updatedAt: nowIso };
-        }
-        return b;
+        const returned = allocations.filter((item) => item.batchId === b.id).reduce((sum, item) => sum + item.quantity, 0);
+        return returned > 0 ? { ...b, totalSold: Math.max(0, b.totalSold - returned), updatedAt: nowIso } : b;
       });
 
       const newState: AppState = {
@@ -329,6 +336,42 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     const newTotalPrice = newQty * newUnitPrice;
     const isNowPaid = editStatus === 'paid';
 
+    let updatedBatches = [...state.batches];
+    let nextAllocations = editingSale.batchAllocations?.length
+      ? editingSale.batchAllocations.map((item) => ({ ...item }))
+      : [{ batchId: editingSale.batchId, quantity: editingSale.quantity }];
+
+    if (qtyDiff > 0) {
+      const allocation = allocateReadyStock(updatedBatches, editingSale.sweetId, editingSale.sweetName, qtyDiff);
+      if (!allocation.ok) {
+        const availableNow = updatedBatches
+          .filter((b) => b.status === 'active' && (b.sweetId === editingSale.sweetId || b.sweetName.toLowerCase() === editingSale.sweetName.toLowerCase()))
+          .reduce((sum, b) => sum + Math.max(0, b.totalProduced - b.totalSold), 0);
+        alert(`Não há doces suficientes para aumentar esta venda. Disponível para acrescentar: ${availableNow}.`);
+        return;
+      }
+      updatedBatches = allocation.batches;
+      allocation.allocations.forEach((extra) => {
+        const existing = nextAllocations.find((item) => item.batchId === extra.batchId);
+        if (existing) existing.quantity += extra.quantity; else nextAllocations.push(extra);
+      });
+    } else if (qtyDiff < 0) {
+      let toReturn = Math.abs(qtyDiff);
+      const returnedByBatch = new Map<string, number>();
+      for (let i = nextAllocations.length - 1; i >= 0 && toReturn > 0; i -= 1) {
+        const allocation = nextAllocations[i];
+        const giveBack = Math.min(allocation.quantity, toReturn);
+        allocation.quantity -= giveBack;
+        toReturn -= giveBack;
+        returnedByBatch.set(allocation.batchId, (returnedByBatch.get(allocation.batchId) || 0) + giveBack);
+      }
+      nextAllocations = nextAllocations.filter((item) => item.quantity > 0);
+      updatedBatches = updatedBatches.map((b) => {
+        const returned = returnedByBatch.get(b.id) || 0;
+        return returned ? { ...b, totalSold: Math.max(0, b.totalSold - returned), updatedAt: nowIso } : b;
+      });
+    }
+
     const updatedSales = state.sales.map((s) => {
       if (s.id === editingSale.id) {
         return {
@@ -339,21 +382,12 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           paymentStatus: editStatus,
           isPaidImmediately: isNowPaid,
           paymentDate: isNowPaid ? (s.paymentDate || nowIso) : undefined,
+          batchId: nextAllocations[0]?.batchId || s.batchId,
+          batchAllocations: nextAllocations,
           updatedAt: nowIso,
         };
       }
       return s;
-    });
-
-    const updatedBatches = state.batches.map((b) => {
-      if (b.id === editingSale.batchId) {
-        return {
-          ...b,
-          totalSold: Math.max(0, b.totalSold + qtyDiff),
-          updatedAt: nowIso,
-        };
-      }
-      return b;
     });
 
     const newState: AppState = {
@@ -863,6 +897,14 @@ export const SalesPage: React.FC<SalesPageProps> = ({
                               </button>
                               <button
                                 type="button"
+                                onClick={() => setPixSale(sale)}
+                                className="p-1.5 bg-cyan-50 hover:bg-cyan-600 hover:text-white text-cyan-700 border border-cyan-200 rounded-xl transition-all cursor-pointer"
+                                title="Gerar QR Code PIX"
+                              >
+                                <QrCode className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => handleSendWhatsApp(sale)}
                                 className="p-1.5 bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-700 border border-emerald-200 rounded-xl transition-all cursor-pointer"
                                 title="Enviar WhatsApp"
@@ -1341,6 +1383,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           </div>
         </div>
       )}
+      <PixPaymentModal open={!!pixSale} onClose={() => setPixSale(null)} amount={pixSale?.totalPrice || 0} description={pixSale ? `${pixSale.buyerName} · ${pixSale.quantity}x ${pixSale.sweetName}` : ''} pixKey={pixKey} recipientName={pixRecipientName} city={pixCity} />
     </div>
   );
 };

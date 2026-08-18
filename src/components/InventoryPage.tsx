@@ -72,6 +72,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
   // ESTOQUE: FORM STATES
   const [itemName, setItemName] = useState('');
+  const [existingItemId, setExistingItemId] = useState<string>('new');
   const [itemCategory, setItemCategory] = useState<'ingrediente' | 'embalagem' | 'utensilio' | 'outro'>('ingrediente');
   const [itemExpiry, setItemExpiry] = useState('2026-10-30');
   const [itemCostStr, setItemCostStr] = useState<string>('');
@@ -254,9 +255,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const totalIngredientsCost = recipeIngredients.reduce((acc, row) => {
     const invItem = state.inventory.find((i) => i.id === row.inventoryItemId);
     if (!invItem) return acc;
-    const unitCost = invItem.totalQuantityBought > 0
-      ? invItem.totalCostPaid / invItem.totalQuantityBought
-      : invItem.unitCost;
+    const unitCost = invItem.unitCost;
     const qty = parseFormattedNumber(row.quantityUsedStr);
     return acc + qty * unitCost;
   }, 0);
@@ -335,9 +334,22 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     const minQty = parseFormattedNumber(minAlertQtyStr) || 3;
     const nowIso = new Date().toISOString();
 
-    const newInsumo: InventoryItem = {
+    const existing = existingItemId !== 'new' ? state.inventory.find((item) => item.id === existingItemId) : undefined;
+    const purchaseName = existing?.name || itemName.trim();
+    if (!purchaseName) return;
+
+    const newInsumo: InventoryItem = existing ? {
+      ...existing,
+      totalQuantityBought: existing.totalQuantityBought + qty,
+      remainingQuantity: existing.remainingQuantity + qty,
+      totalCostPaid: existing.totalCostPaid + cost,
+      unitCost: (existing.remainingQuantity + qty) > 0 ? ((existing.remainingQuantity * existing.unitCost) + cost) / (existing.remainingQuantity + qty) : cost,
+      expirationDate: itemExpiry || existing.expirationDate,
+      updatedAt: nowIso,
+      minAlertQuantity: minQty || existing.minAlertQuantity,
+    } : {
       id: `inv-${Date.now()}`,
-      name: itemName.trim(),
+      name: purchaseName,
       category: itemCategory,
       unit: itemUnit as any,
       totalQuantityBought: qty,
@@ -352,7 +364,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
     const newExpense = {
       id: `exp-${Date.now()}`,
-      description: `Compra: ${itemName.trim()} (${qty} ${itemUnit})`,
+      description: `Compra: ${purchaseName} (${qty} ${existing?.unit || itemUnit})`,
       category: itemCategory === 'embalagem' ? ('embalagens' as const) : ('ingredientes' as const),
       totalCost: cost,
       date: nowIso,
@@ -362,17 +374,18 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
     const newState: AppState = {
       ...state,
-      inventory: [newInsumo, ...state.inventory],
+      inventory: existing ? state.inventory.map((item) => item.id === existing.id ? newInsumo : item) : [newInsumo, ...state.inventory],
       expenses: [newExpense, ...state.expenses],
     };
 
     onStateChange(newState);
 
     setItemName('');
+    setExistingItemId('new');
     setItemCostStr('');
     setItemQtyStr('1');
     setShowAddInsumoModal(false);
-    alert('✅ Compra registrada no Depósito!');
+    alert(existing ? '✅ Reposição somada ao item existente no Depósito!' : '✅ Compra registrada no Depósito!');
   };
 
   // SUBMIT NOVA RECEITA
@@ -389,7 +402,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
     const compiledIngredients: RecipeIngredient[] = recipeIngredients.map((row) => {
       const inv = state.inventory.find((i) => i.id === row.inventoryItemId);
-      const unitCost = inv && inv.totalQuantityBought > 0 ? inv.totalCostPaid / inv.totalQuantityBought : (inv?.unitCost || 0);
+      const unitCost = inv?.unitCost || 0;
       const qty = parseFormattedNumber(row.quantityUsedStr);
       return {
         inventoryItemId: row.inventoryItemId,
@@ -497,9 +510,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     const actualIngredients: RecipeIngredient[] = repeatIngredients.map((row) => {
       const inventoryItem = state.inventory.find((item) => item.id === row.inventoryItemId);
       const quantityUsed = Math.max(0, parseFormattedNumber(row.quantityUsedStr));
-      const currentUnitCost = inventoryItem && inventoryItem.totalQuantityBought > 0
-        ? inventoryItem.totalCostPaid / inventoryItem.totalQuantityBought
-        : inventoryItem?.unitCost || 0;
+      const currentUnitCost = inventoryItem?.unitCost || 0;
       return {
         inventoryItemId: row.inventoryItemId,
         inventoryItemName: row.inventoryItemName,
@@ -766,6 +777,22 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
             {/* FORMULARIO DE COMPRA */}
             <form onSubmit={handleAddInsumo} className="space-y-4 text-xs">
+              <div>
+                <label className="block text-xs font-black text-slate-700 mb-1.5">O que você está fazendo?</label>
+                <select
+                  value={existingItemId}
+                  onChange={(e) => {
+                    const id = e.target.value; setExistingItemId(id);
+                    const item = state.inventory.find((i) => i.id === id);
+                    if (item) { setItemName(item.name); setItemCategory(item.category); setItemUnit(item.unit); setMinAlertQtyStr(String(item.minAlertQuantity ?? 3)); }
+                  }}
+                  className="w-full p-3 bg-amber-50 border border-amber-200 rounded-2xl font-bold text-slate-900"
+                >
+                  <option value="new">➕ Cadastrar produto novo</option>
+                  {state.inventory.map((item) => <option key={item.id} value={item.id}>♻️ Repor {item.name} — atual: {item.remainingQuantity} {item.unit}</option>)}
+                </select>
+                <p className="text-[10px] text-slate-500 mt-1">Reposição soma quantidade e valor ao cadastro existente; nenhuma compra antiga é apagada.</p>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Nome do Insumo:</label>
@@ -910,9 +937,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredInventory.map((item) => {
-                    const calculatedUnitCost = item.totalQuantityBought > 0
-                      ? item.totalCostPaid / item.totalQuantityBought
-                      : item.unitCost;
+                    const calculatedUnitCost = item.unitCost;
 
                     return (
                       <tr key={item.id} className="hover:bg-slate-50 transition-colors">
@@ -1061,7 +1086,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                   {recipeIngredients.map((row, index) => {
                     const selectedInvItem = state.inventory.find((i) => i.id === row.inventoryItemId);
                     const unitCost = selectedInvItem
-                      ? (selectedInvItem.totalQuantityBought > 0 ? selectedInvItem.totalCostPaid / selectedInvItem.totalQuantityBought : selectedInvItem.unitCost)
+                      ? selectedInvItem.unitCost
                       : 0;
                     const qtyVal = parseFormattedNumber(row.quantityUsedStr);
                     const lineTotalCost = qtyVal * unitCost;
@@ -1078,7 +1103,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                               className="w-full p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 cursor-pointer"
                             >
                               {state.inventory.map((inv) => {
-                                const invUnitCost = inv.totalQuantityBought > 0 ? inv.totalCostPaid / inv.totalQuantityBought : inv.unitCost;
+                                const invUnitCost = inv.unitCost;
                                 return (
                                   <option key={inv.id} value={inv.id}>
                                     📦 {inv.name} ({formatCurrency(invUnitCost)} / {inv.unit})
@@ -1425,9 +1450,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 const qty = Math.max(1, Math.floor(parseFormattedNumber(repeatQuantityStr)));
                 const ingredientsCost = repeatIngredients.reduce((total, row) => {
                   const inventoryItem = state.inventory.find((item) => item.id === row.inventoryItemId);
-                  const currentUnitCost = inventoryItem && inventoryItem.totalQuantityBought > 0
-                    ? inventoryItem.totalCostPaid / inventoryItem.totalQuantityBought
-                    : inventoryItem?.unitCost || 0;
+                  const currentUnitCost = inventoryItem?.unitCost || 0;
                   return total + parseFormattedNumber(row.quantityUsedStr) * currentUnitCost;
                 }, 0);
                 const indirect = (repeatRecipe.indirectCost || 0) * (qty / Math.max(1, repeatRecipe.yieldsCount));

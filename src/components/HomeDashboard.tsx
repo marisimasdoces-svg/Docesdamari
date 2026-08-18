@@ -54,10 +54,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     (sale) => sale.monthKey === selectedMonth || saoPauloDateKey(sale.saleDate).startsWith(selectedMonth)
   );
   const salesToday = state.sales.filter((sale) => saoPauloDateKey(sale.saleDate) === todayKey);
-  const batchesToday = state.batches.filter(
-    (batch) => saoPauloDateKey(batch.createdAt || batch.startDate) === todayKey
-  );
-  const producedToday = batchesToday.reduce((total, batch) => total + (batch.totalProduced || 0), 0);
+  const availableReadyStock = state.batches
+    .filter((batch) => batch.status === 'active')
+    .reduce((total, batch) => total + Math.max(0, (batch.totalProduced || 0) - (batch.totalSold || 0)), 0);
   const soldToday = salesToday.reduce((total, sale) => total + (sale.quantity || 0), 0);
 
   const grossMonth = salesInMonth.reduce((total, sale) => total + (sale.totalPrice || 0), 0);
@@ -134,9 +133,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         </button>
       </section>
 
-      <section className="summary-strip" aria-label="Resumo de hoje">
+      <section className="summary-strip" aria-label="Resumo operacional">
         <div className="summary-title"><span className="live-dot" /> Hoje</div>
-        <div className="summary-item"><strong>{producedToday}</strong><span>produzidos</span></div>
+        <div className="summary-item"><strong>{availableReadyStock}</strong><span>disponíveis p/ venda</span></div>
         <div className="summary-divider" />
         <div className="summary-item"><strong>{soldToday}</strong><span>vendidos</span></div>
         <div className="summary-divider" />

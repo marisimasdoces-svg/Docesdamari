@@ -77,6 +77,7 @@ export interface Sale {
   notes?: string;
   isRetroactive?: boolean;
   estimatedUnitCost?: number;
+  batchAllocations?: Array<{ batchId: string; quantity: number }>;
   updatedAt?: string;
   deletedAt?: string;
 }
@@ -160,6 +161,14 @@ export interface UtilitySettings {
   productionCycles: number;
   updatedAt: string;
   deletedAt?: string;
+  // Registro especial id=financial-settings usa estes campos sem alterar dados antigos.
+  openingBalance?: number;
+  openingDate?: string;
+  pixKey?: string;
+  pixRecipientName?: string;
+  pixCity?: string;
+  historicalRevenue?: number;
+  historicalEstimatedCost?: number;
 }
 
 export interface AppState {
