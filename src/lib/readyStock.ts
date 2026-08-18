@@ -2,19 +2,12 @@ import { ProductionBatch, UtilitySettings } from '../types';
 
 /**
  * Estoque físico de potes prontos.
- *
- * Fonte única de verdade a partir de 18/08/2026:
- * - saldo físico atual (readyStockCurrent)
- * - contador de unidades vendidas no dia (readyStockSoldToday*)
- *
- * O histórico antigo NÃO é usado para reconstruir o saldo, porque passou por
- * versões diferentes do app. A partir do marco confirmado pelo usuário, cada
- * evento novo movimenta os contadores diretamente.
+ * Fonte única de verdade a partir de 18/08/2026.
  */
-export const READY_STOCK_CURRENT_DEFAULT = 5;
-export const READY_STOCK_LEDGER_VERSION = '2026-08-18-v2';
+export const READY_STOCK_CURRENT_DEFAULT = 0;
+export const READY_STOCK_LEDGER_VERSION = '2026-08-18-v3-persist';
 export const READY_STOCK_BASELINE_DATE = '2026-08-18';
-export const READY_STOCK_BASELINE_SOLD = 8;
+export const READY_STOCK_BASELINE_SOLD = 13;
 
 export const saoPauloDateKey = (date: Date | string = new Date()) => {
   const parsed = typeof date === 'string' ? new Date(date) : date;
@@ -41,7 +34,6 @@ export const getAvailableReadyStock = (
   return Math.max(0, financial?.readyStockCurrent ?? READY_STOCK_CURRENT_DEFAULT);
 };
 
-/** Retorna quantos potes foram efetivamente vendidos hoje pelo novo contador operacional. */
 export const getReadyStockSoldToday = (
   settings: UtilitySettings[] = [],
   now: Date | string = new Date(),
@@ -52,11 +44,6 @@ export const getReadyStockSoldToday = (
   return Math.max(0, financial.readyStockSoldTodayQuantity ?? 0);
 };
 
-/**
- * Aplica uma movimentação ao estoque físico.
- * delta: + produção/devolução; - venda.
- * soldDelta: + unidades vendidas hoje; - correção/devolução de venda do dia.
- */
 export const applyReadyStockDelta = (
   settings: UtilitySettings[] = [],
   delta: number,
@@ -97,9 +84,9 @@ export const applyReadyStockDelta = (
 };
 
 /**
- * Correção única do marco físico confirmado em 18/08/2026:
- * 13 no início do dia - 8 vendidos = 5 disponíveis.
- * Não altera vendas, clientes, pagamentos ou lotes antigos.
+ * Marco físico confirmado em 18/08/2026:
+ * 13 potes disponíveis no início do dia, 13 vendidos, 0 restantes.
+ * Não altera vendas, clientes, pagamentos ou lotes históricos.
  */
 export const ensureReadyStockLedgerBaseline = (
   settings: UtilitySettings[] = [],
@@ -119,7 +106,7 @@ export const ensureReadyStockLedgerBaseline = (
     ...(previous || {}),
     readyStockOpening: previous?.readyStockOpening ?? 13,
     readyStockOpeningDate: previous?.readyStockOpeningDate || nowIso,
-    readyStockCurrent: 5,
+    readyStockCurrent: 0,
     readyStockCurrentUpdatedAt: nowIso,
     readyStockSoldTodayDate: READY_STOCK_BASELINE_DATE,
     readyStockSoldTodayQuantity: READY_STOCK_BASELINE_SOLD,
@@ -132,7 +119,6 @@ export const ensureReadyStockLedgerBaseline = (
     : [financial, ...settings];
 };
 
-/** Define explicitamente o saldo físico, sem tocar em vendas ou produções históricas. */
 export const setReadyStockCurrent = (
   settings: UtilitySettings[] = [],
   quantity: number,
@@ -142,7 +128,6 @@ export const setReadyStockCurrent = (
   return applyReadyStockDelta(settings, Math.max(0, quantity) - current, nowIso);
 };
 
-/** Soma uma diferença à movimentação diária gravada na própria venda. */
 export const addSaleDailyMovement = (
   movements: Record<string, number> | undefined,
   nowIso: string,
@@ -156,5 +141,4 @@ export const addSaleDailyMovement = (
   };
 };
 
-// Compatibilidade com imports das versões anteriores. Não reescreve lotes.
 export const reconcileReadyStockBatches = (batches: ProductionBatch[], _sales: unknown[]) => batches;
