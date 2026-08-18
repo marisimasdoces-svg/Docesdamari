@@ -31,10 +31,23 @@ export const getAvailableReadyStock = (
   const producedAfter = batches
     .filter((batch) => !batch.deletedAt && new Date(batch.createdAt).getTime() > anchor && (!sweetId && !sweetName || sameSweet(batch, sweetId, sweetName)))
     .reduce((sum, batch) => sum + (batch.totalProduced || 0), 0);
+  const matchesSweet = (sale: Sale) =>
+    (!sweetId && !sweetName)
+    || (!!sale.sweetId && sale.sweetId === sweetId)
+    || normalizedName(sale.sweetName) === normalizedName(sweetName);
+
   const soldAfter = sales
-    .filter((sale) => !sale.deletedAt && !sale.isRetroactive && new Date(sale.saleDate).getTime() > anchor && (!sweetId && !sweetName || (!!sale.sweetId && sale.sweetId === sweetId) || normalizedName(sale.sweetName) === normalizedName(sweetName)))
+    .filter((sale) => !sale.deletedAt && !sale.isRetroactive && new Date(sale.saleDate).getTime() > anchor && matchesSweet(sale))
     .reduce((sum, sale) => sum + (sale.quantity || 0), 0);
-  return Math.max(0, opening.quantity + producedAfter - soldAfter);
+
+  // Uma venda anterior ao marco já está refletida nos 13 potes físicos informados.
+  // Se essa venda for editada depois do marco, só a DIFERENÇA (ex.: 3 -> 5 = +2)
+  // deve afetar o estoque atual. Assim não recontamos a venda antiga inteira.
+  const historicalSaleAdjustments = sales
+    .filter((sale) => !sale.deletedAt && !sale.isRetroactive && new Date(sale.saleDate).getTime() <= anchor && matchesSweet(sale))
+    .reduce((sum, sale) => sum + (sale.readyStockAdjustmentQuantity || 0), 0);
+
+  return Math.max(0, opening.quantity + producedAfter - soldAfter - historicalSaleAdjustments);
 };
 
 // Mantido apenas por compatibilidade com chamadas existentes. Não reescreve lotes históricos.

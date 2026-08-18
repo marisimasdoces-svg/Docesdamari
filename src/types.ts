@@ -78,6 +78,11 @@ export interface Sale {
   isRetroactive?: boolean;
   estimatedUnitCost?: number;
   batchAllocations?: Array<{ batchId: string; quantity: number }>;
+  // Ajuste de estoque feito APÓS o marco manual de potes disponíveis.
+  // Usado principalmente quando uma venda antiga é editada (ex.: 3 -> 5):
+  // a venda original já estava embutida no marco físico, então só a diferença
+  // precisa baixar do estoque atual.
+  readyStockAdjustmentQuantity?: number;
   updatedAt?: string;
   deletedAt?: string;
 }

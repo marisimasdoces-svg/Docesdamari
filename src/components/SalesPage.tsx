@@ -18,7 +18,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { PixPaymentModal } from './PixPaymentModal';
-import { getAvailableReadyStock, reconcileReadyStockBatches } from '../lib/readyStock';
+import { getAvailableReadyStock, getReadyStockOpening, reconcileReadyStockBatches } from '../lib/readyStock';
 
 interface SalesPageProps {
   state: AppState;
@@ -386,6 +386,10 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       });
     }
 
+    const readyStockOpening = getReadyStockOpening(state.utilitySettings);
+    const readyStockAnchor = new Date(readyStockOpening.date).getTime();
+    const editedSaleIsHistorical = new Date(editingSale.saleDate).getTime() <= readyStockAnchor;
+
     const updatedSales = state.sales.map((s) => {
       if (s.id === editingSale.id) {
         return {
@@ -398,6 +402,12 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           paymentDate: isNowPaid ? (s.paymentDate || nowIso) : undefined,
           batchId: nextAllocations[0]?.batchId || s.batchId,
           batchAllocations: nextAllocations,
+          // Se a venda nasceu antes do marco físico (13 potes), a quantidade antiga
+          // já estava embutida naquele saldo. Ao editar 3 -> 5 hoje, registramos +2.
+          // Ao editar 5 -> 4 depois, somamos -1 e o ajuste acumulado passa a +1.
+          readyStockAdjustmentQuantity: editedSaleIsHistorical
+            ? (s.readyStockAdjustmentQuantity || 0) + qtyDiff
+            : s.readyStockAdjustmentQuantity,
           updatedAt: nowIso,
         };
       }
