@@ -1,54 +1,75 @@
-import { ProductionBatch, Sale, UtilitySettings } from '../types';
-
-const normalizedName = (value?: string) => (value || '').trim().toLocaleLowerCase('pt-BR');
-
-export const sameSweet = (batch: ProductionBatch, sweetId?: string, sweetName?: string) =>
-  (!!batch.sweetId && !!sweetId && batch.sweetId === sweetId)
-  || normalizedName(batch.sweetName) === normalizedName(sweetName);
+import { ProductionBatch, UtilitySettings } from '../types';
 
 /**
- * O histórico anterior ao marco NÃO é reconstruído. O usuário confirmou
- * fisicamente quantos potes existiam naquele momento. Daí em diante, o saldo
- * é: marco + novas produções - novas vendas. Nenhum registro antigo é alterado.
+ * Estoque físico de potes prontos.
+ *
+ * A partir desta versão NÃO tentamos mais reconstruir o saldo usando lotes e
+ * vendas antigas. O histórico do app passou por várias versões e não é uma
+ * fonte segura para determinar o que existe fisicamente no mostruário hoje.
+ *
+ * O usuário confirmou em 18/08/2026 que o saldo físico correto neste marco é
+ * 5 potes. Daqui em diante este contador é persistido e movimentado somente
+ * por eventos novos: produção (+), venda (-), edição (+/- diferença) e
+ * exclusão de venda (+ devolução).
  */
-export const getReadyStockOpening = (settings: UtilitySettings[] = []) => {
-  const financial = settings.find((item) => item.id === 'financial-settings');
-  return {
-    quantity: financial?.readyStockOpening ?? 13,
-    date: financial?.readyStockOpeningDate || '2026-08-18T09:55:00-03:00',
-  };
-};
+export const READY_STOCK_CURRENT_DEFAULT = 5;
+
+export const getFinancialSettings = (settings: UtilitySettings[] = []) =>
+  settings.find((item) => item.id === 'financial-settings');
 
 export const getAvailableReadyStock = (
-  batches: ProductionBatch[],
-  sales: Sale[],
+  _batches: unknown[] = [],
+  _sales: unknown[] = [],
   settings: UtilitySettings[] = [],
-  sweetId?: string,
-  sweetName?: string,
+  _sweetId?: string,
+  _sweetName?: string,
 ) => {
-  const opening = getReadyStockOpening(settings);
-  const anchor = new Date(opening.date).getTime();
-  const producedAfter = batches
-    .filter((batch) => !batch.deletedAt && new Date(batch.createdAt).getTime() > anchor && (!sweetId && !sweetName || sameSweet(batch, sweetId, sweetName)))
-    .reduce((sum, batch) => sum + (batch.totalProduced || 0), 0);
-  const matchesSweet = (sale: Sale) =>
-    (!sweetId && !sweetName)
-    || (!!sale.sweetId && sale.sweetId === sweetId)
-    || normalizedName(sale.sweetName) === normalizedName(sweetName);
-
-  const soldAfter = sales
-    .filter((sale) => !sale.deletedAt && !sale.isRetroactive && new Date(sale.saleDate).getTime() > anchor && matchesSweet(sale))
-    .reduce((sum, sale) => sum + (sale.quantity || 0), 0);
-
-  // Uma venda anterior ao marco já está refletida nos 13 potes físicos informados.
-  // Se essa venda for editada depois do marco, só a DIFERENÇA (ex.: 3 -> 5 = +2)
-  // deve afetar o estoque atual. Assim não recontamos a venda antiga inteira.
-  const historicalSaleAdjustments = sales
-    .filter((sale) => !sale.deletedAt && !sale.isRetroactive && new Date(sale.saleDate).getTime() <= anchor && matchesSweet(sale))
-    .reduce((sum, sale) => sum + (sale.readyStockAdjustmentQuantity || 0), 0);
-
-  return Math.max(0, opening.quantity + producedAfter - soldAfter - historicalSaleAdjustments);
+  const financial = getFinancialSettings(settings);
+  return Math.max(0, financial?.readyStockCurrent ?? READY_STOCK_CURRENT_DEFAULT);
 };
 
-// Mantido apenas por compatibilidade com chamadas existentes. Não reescreve lotes históricos.
-export const reconcileReadyStockBatches = (batches: ProductionBatch[], _sales: Sale[]) => batches;
+/** Aplica uma movimentação ao saldo físico e devolve a lista de configurações atualizada. */
+export const applyReadyStockDelta = (
+  settings: UtilitySettings[] = [],
+  delta: number,
+  nowIso = new Date().toISOString(),
+) => {
+  const previous = getFinancialSettings(settings);
+  const current = Math.max(0, previous?.readyStockCurrent ?? READY_STOCK_CURRENT_DEFAULT);
+  const next = Math.max(0, current + delta);
+
+  const financial: UtilitySettings = {
+    id: 'financial-settings',
+    referenceMonth: 'financial',
+    gasCylinderPrice: 0,
+    electricityBill: 0,
+    electricityKwh: 0,
+    waterBill: 0,
+    productionCycles: 0,
+    ...(previous || {}),
+    // Mantemos os campos antigos apenas por compatibilidade. Eles não entram
+    // mais no cálculo do estoque físico atual.
+    readyStockOpening: previous?.readyStockOpening ?? READY_STOCK_CURRENT_DEFAULT,
+    readyStockOpeningDate: previous?.readyStockOpeningDate || nowIso,
+    readyStockCurrent: next,
+    readyStockCurrentUpdatedAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  return previous
+    ? settings.map((item) => item.id === 'financial-settings' ? financial : item)
+    : [financial, ...settings];
+};
+
+/** Define explicitamente o saldo físico, sem tocar em vendas ou produções históricas. */
+export const setReadyStockCurrent = (
+  settings: UtilitySettings[] = [],
+  quantity: number,
+  nowIso = new Date().toISOString(),
+) => {
+  const current = getAvailableReadyStock([], [], settings);
+  return applyReadyStockDelta(settings, Math.max(0, quantity) - current, nowIso);
+};
+
+// Compatibilidade com imports das versões anteriores. Não reescreve lotes.
+export const reconcileReadyStockBatches = (batches: ProductionBatch[], _sales: unknown[]) => batches;

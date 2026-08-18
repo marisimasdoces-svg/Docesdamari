@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AppState, InventoryItem, ProductionBatch, Recipe, RecipeIngredient, User, UtilitySettings } from '../types';
+import { applyReadyStockDelta } from '../lib/readyStock';
 import { formatCurrency, formatMonthShort, getSaoPauloDateKey } from '../lib/storage';
 import {
   Package,
@@ -574,6 +575,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       recipes: updatedRecipes,
       batches: [newBatch, ...state.batches],
       inventory: updatedInventory,
+      utilitySettings: applyReadyStockDelta(state.utilitySettings, qty, nowIso),
     };
 
     onStateChange(newState);

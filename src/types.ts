@@ -83,6 +83,9 @@ export interface Sale {
   // a venda original já estava embutida no marco físico, então só a diferença
   // precisa baixar do estoque atual.
   readyStockAdjustmentQuantity?: number;
+  // Quantidade desta venda que efetivamente movimentou o contador físico da versão atual.
+  // Vendas antigas começam em 0; novas vendas começam com a quantidade vendida.
+  readyStockMovementQuantity?: number;
   updatedAt?: string;
   deletedAt?: string;
 }
@@ -176,6 +179,9 @@ export interface UtilitySettings {
   historicalEstimatedCost?: number;
   readyStockOpening?: number;
   readyStockOpeningDate?: string;
+  // Saldo físico atual de potes prontos. Fonte única a partir de 18/08/2026.
+  readyStockCurrent?: number;
+  readyStockCurrentUpdatedAt?: string;
 }
 
 export interface AppState {

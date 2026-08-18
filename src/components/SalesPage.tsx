@@ -18,7 +18,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { PixPaymentModal } from './PixPaymentModal';
-import { getAvailableReadyStock, getReadyStockOpening, reconcileReadyStockBatches } from '../lib/readyStock';
+import { applyReadyStockDelta, getAvailableReadyStock, reconcileReadyStockBatches } from '../lib/readyStock';
 
 interface SalesPageProps {
   state: AppState;
@@ -278,6 +278,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       notes: saleNotes.trim(),
       estimatedUnitCost: saleUnitCost,
       batchAllocations: allocation.allocations,
+      readyStockMovementQuantity: quantity,
     };
 
     const newState: AppState = {
@@ -285,6 +286,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       buyers: updatedBuyers,
       sales: [newSale, ...state.sales],
       batches: updatedBatches,
+      utilitySettings: applyReadyStockDelta(state.utilitySettings, -quantity, nowIso),
     };
 
     onStateChange(newState);
@@ -324,6 +326,13 @@ export const SalesPage: React.FC<SalesPageProps> = ({
         ...state,
         sales: updatedSales,
         batches: updatedBatches,
+        utilitySettings: sale.isRetroactive
+          ? state.utilitySettings
+          : applyReadyStockDelta(
+              state.utilitySettings,
+              Math.max(0, sale.readyStockMovementQuantity ?? 0),
+              nowIso,
+            ),
       };
 
       onStateChange(newState);
@@ -386,10 +395,6 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       });
     }
 
-    const readyStockOpening = getReadyStockOpening(state.utilitySettings);
-    const readyStockAnchor = new Date(readyStockOpening.date).getTime();
-    const editedSaleIsHistorical = new Date(editingSale.saleDate).getTime() <= readyStockAnchor;
-
     const updatedSales = state.sales.map((s) => {
       if (s.id === editingSale.id) {
         return {
@@ -402,12 +407,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           paymentDate: isNowPaid ? (s.paymentDate || nowIso) : undefined,
           batchId: nextAllocations[0]?.batchId || s.batchId,
           batchAllocations: nextAllocations,
-          // Se a venda nasceu antes do marco físico (13 potes), a quantidade antiga
-          // já estava embutida naquele saldo. Ao editar 3 -> 5 hoje, registramos +2.
-          // Ao editar 5 -> 4 depois, somamos -1 e o ajuste acumulado passa a +1.
-          readyStockAdjustmentQuantity: editedSaleIsHistorical
-            ? (s.readyStockAdjustmentQuantity || 0) + qtyDiff
-            : s.readyStockAdjustmentQuantity,
+          readyStockMovementQuantity: (s.readyStockMovementQuantity || 0) + qtyDiff,
           updatedAt: nowIso,
         };
       }
@@ -418,6 +418,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       ...state,
       sales: updatedSales,
       batches: updatedBatches,
+      utilitySettings: applyReadyStockDelta(state.utilitySettings, -qtyDiff, nowIso),
     };
 
     onStateChange(newState);
