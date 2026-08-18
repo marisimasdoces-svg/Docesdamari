@@ -7,6 +7,7 @@ import {
   initFirebaseSync,
   fetchCloudState,
   stripDeletedRecords,
+  mergeAppStates,
 } from './lib/storage';
 import { SplashOpening } from './components/SplashOpening';
 import { LoginPage } from './components/LoginPage';
@@ -65,9 +66,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthKey());
 
-  // Correção única e não destrutiva do estoque operacional em 18/08/2026.
-  // O usuário confirmou: 13 potes no início do dia, 8 vendidos, 5 disponíveis.
-  // Depois deste marco, todos os eventos atualizam os contadores diretamente.
+  // Marco operacional atualizado em 18/08/2026.
+  // O usuário confirmou que os últimos 5 foram vendidos: 13 vendidos no dia e 0 disponíveis.
+  // Depois deste marco, todos os eventos atualizam o contador persistente diretamente.
   useEffect(() => {
     if (!appState.currentUser) return;
     const financial = appState.utilitySettings?.find((item) => item.id === 'financial-settings');
@@ -88,10 +89,15 @@ export default function App() {
 
     const applyRemoteState = (remoteState: AppState) => {
       if (disposed) return;
-      setAppState((prev) => ({
-        ...stripDeletedRecords(remoteState),
-        currentUser: prev.currentUser || remoteState.currentUser,
-      }));
+      // Nunca permitir que um snapshot antigo do Firebase substitua uma
+      // movimentação local mais recente (principalmente o estoque físico).
+      setAppState((prev) => {
+        const merged = mergeAppStates(remoteState, prev);
+        return {
+          ...stripDeletedRecords(merged),
+          currentUser: prev.currentUser || remoteState.currentUser,
+        };
+      });
     };
 
     const startFirebase = async () => {
