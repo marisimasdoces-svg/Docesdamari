@@ -10,6 +10,16 @@ interface CashflowPageProps {
   currentUser: User;
 }
 
+const expenseMonthKey = (expense: { date?: string; monthKey?: string }) => {
+  if (expense.date) {
+    const parsed = new Date(expense.date);
+    if (!Number.isNaN(parsed.getTime())) {
+      return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(parsed);
+    }
+  }
+  return expense.monthKey || '';
+};
+
 const saleCost = (state: AppState, sale: Sale) => {
   if (typeof sale.estimatedUnitCost === 'number' && sale.estimatedUnitCost >= 0) return sale.quantity * sale.estimatedUnitCost;
   const allocations = sale.batchAllocations?.length ? sale.batchAllocations : [{ batchId: sale.batchId, quantity: sale.quantity }];
@@ -54,7 +64,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, onStateChange
   const selectedYear = currentMonthKey.slice(0, 4);
   const monthSales = state.sales.filter((sale) => sale.monthKey === currentMonthKey);
   const monthPayments = state.payments.filter((payment) => payment.monthKey === currentMonthKey);
-  const monthPurchases = state.expenses.filter((expense) => expense.monthKey === currentMonthKey);
+  const monthPurchases = state.expenses.filter((expense) => expenseMonthKey(expense) === currentMonthKey);
   const monthRevenue = monthSales.reduce((total, sale) => total + sale.totalPrice, 0);
   const monthReceived = receivedFromSales(monthSales) + monthPayments.reduce((total, payment) => total + payment.amountPaid, 0);
   const monthPending = monthSales.filter((sale) => sale.paymentStatus === 'pending').reduce((total, sale) => total + sale.totalPrice, 0);
@@ -64,7 +74,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, onStateChange
 
   const yearSales = state.sales.filter((sale) => sale.monthKey.startsWith(selectedYear));
   const yearPayments = state.payments.filter((payment) => payment.monthKey.startsWith(selectedYear));
-  const yearPurchases = state.expenses.filter((expense) => expense.monthKey.startsWith(selectedYear));
+  const yearPurchases = state.expenses.filter((expense) => expenseMonthKey(expense).startsWith(selectedYear));
   const actualRevenueByMonth = new Map<string, number>();
   yearSales.forEach((sale) => actualRevenueByMonth.set(sale.monthKey, (actualRevenueByMonth.get(sale.monthKey) || 0) + sale.totalPrice));
   const historicalRows = (state.utilitySettings || []).filter((item) => item.referenceMonth?.startsWith(selectedYear) && typeof item.historicalRevenue === 'number');
@@ -149,3 +159,4 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, onStateChange
     </div>
   );
 };
+

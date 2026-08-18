@@ -18,6 +18,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { PixPaymentModal } from './PixPaymentModal';
+import { reconcileReadyStockBatches } from '../lib/readyStock';
 
 interface SalesPageProps {
   state: AppState;
@@ -69,7 +70,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   const [editQuantity, setEditQuantity] = useState<number>(1);
   const [editUnitPrice, setEditUnitPrice] = useState<number>(13.0);
   const [editStatus, setEditStatus] = useState<'paid' | 'pending'>('pending');
-  const [pixSale, setPixSale] = useState<Sale | null>(null);
+  const [showInstantPix, setShowInstantPix] = useState(false);
 
   const financialSettings = state.utilitySettings?.find((item) => item.id === 'financial-settings');
   const pixKey = financialSettings?.pixKey || 'mdamerso@hotmail.com';
@@ -148,7 +149,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   };
 
   // Estoque de doces prontos: permanente e somado em todos os lotes ativos do doce.
-  const activeBatches = state.batches.filter((b) => b.status === 'active');
+  const reconciledBatches = reconcileReadyStockBatches(state.batches, state.sales);
+  const activeBatches = reconciledBatches.filter((b) => b.status === 'active');
   const selectedSweet = state.sweets.find((s) => s.id === selectedSweetId) || state.sweets[0];
   const batchesForSelectedSweet = activeBatches
     .filter((b) => selectedSweet && (b.sweetId === selectedSweet.id || b.sweetName.toLowerCase() === selectedSweet.name.toLowerCase()))
@@ -236,7 +238,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       return;
     }
 
-    const allocation = allocateReadyStock(state.batches, sweet.id, sweet.name, quantity);
+    const allocation = allocateReadyStock(reconciledBatches, sweet.id, sweet.name, quantity);
     if (!allocation.ok) {
       alert('Não foi possível reservar os potes nos lotes disponíveis. Atualize a tela e tente novamente.');
       return;
@@ -336,7 +338,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     const newTotalPrice = newQty * newUnitPrice;
     const isNowPaid = editStatus === 'paid';
 
-    let updatedBatches = [...state.batches];
+    let updatedBatches = [...reconcileReadyStockBatches(state.batches, state.sales)];
     let nextAllocations = editingSale.batchAllocations?.length
       ? editingSale.batchAllocations.map((item) => ({ ...item }))
       : [{ batchId: editingSale.batchId, quantity: editingSale.quantity }];
@@ -528,7 +530,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
         </div>
 
         {/* Action buttons bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
           <button
             type="button"
             onClick={() => setShowSaleForm(!showSaleForm)}
@@ -545,6 +547,15 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           >
             <Clock className="w-5 h-5 text-slate-950" />
             <span>📅 Lançar Vendas Anteriores</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowInstantPix(true)}
+            className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-700 text-white font-black text-sm rounded-2xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
+          >
+            <QrCode className="w-5 h-5" />
+            <span>PIX para pagar na hora</span>
           </button>
 
           <button
@@ -894,14 +905,6 @@ export const SalesPage: React.FC<SalesPageProps> = ({
                                 title="Editar Quantidade / Venda"
                               >
                                 <Edit2 className="w-4 h-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setPixSale(sale)}
-                                className="p-1.5 bg-cyan-50 hover:bg-cyan-600 hover:text-white text-cyan-700 border border-cyan-200 rounded-xl transition-all cursor-pointer"
-                                title="Gerar QR Code PIX"
-                              >
-                                <QrCode className="w-4 h-4" />
                               </button>
                               <button
                                 type="button"
@@ -1383,7 +1386,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           </div>
         </div>
       )}
-      <PixPaymentModal open={!!pixSale} onClose={() => setPixSale(null)} amount={pixSale?.totalPrice || 0} description={pixSale ? `${pixSale.buyerName} · ${pixSale.quantity}x ${pixSale.sweetName}` : ''} pixKey={pixKey} recipientName={pixRecipientName} city={pixCity} />
+      <PixPaymentModal open={showInstantPix} onClose={() => setShowInstantPix(false)} amount={0} description="QR Code geral para o cliente pagar na hora. O valor é informado no aplicativo do banco." pixKey={pixKey} recipientName={pixRecipientName} city={pixCity} />
     </div>
   );
 };

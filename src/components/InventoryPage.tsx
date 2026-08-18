@@ -75,6 +75,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const [existingItemId, setExistingItemId] = useState<string>('new');
   const [itemCategory, setItemCategory] = useState<'ingrediente' | 'embalagem' | 'utensilio' | 'outro'>('ingrediente');
   const [itemExpiry, setItemExpiry] = useState('2026-10-30');
+  const [itemPurchaseDate, setItemPurchaseDate] = useState<string>(() => getSaoPauloDateKey());
   const [itemCostStr, setItemCostStr] = useState<string>('');
   const [itemQtyStr, setItemQtyStr] = useState<string>('1');
   const [itemUnit, setItemUnit] = useState<string>('caixa');
@@ -333,6 +334,8 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     const cost = parseFormattedNumber(itemCostStr);
     const minQty = parseFormattedNumber(minAlertQtyStr) || 3;
     const nowIso = new Date().toISOString();
+    const purchaseDateKey = itemPurchaseDate || getSaoPauloDateKey();
+    const purchaseDateIso = new Date(`${purchaseDateKey}T12:00:00-03:00`).toISOString();
 
     const existing = existingItemId !== 'new' ? state.inventory.find((item) => item.id === existingItemId) : undefined;
     const purchaseName = existing?.name || itemName.trim();
@@ -357,7 +360,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       totalCostPaid: cost,
       unitCost: qty > 0 ? cost / qty : cost,
       expirationDate: itemExpiry,
-      purchaseDate: nowIso,
+      purchaseDate: purchaseDateIso,
       updatedAt: nowIso,
       minAlertQuantity: minQty,
     };
@@ -367,9 +370,9 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       description: `Compra: ${purchaseName} (${qty} ${existing?.unit || itemUnit})`,
       category: itemCategory === 'embalagem' ? ('embalagens' as const) : ('ingredientes' as const),
       totalCost: cost,
-      date: nowIso,
+      date: purchaseDateIso,
       updatedAt: nowIso,
-      monthKey: selectedMonth,
+      monthKey: purchaseDateKey.slice(0, 7),
     };
 
     const newState: AppState = {
@@ -384,6 +387,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     setExistingItemId('new');
     setItemCostStr('');
     setItemQtyStr('1');
+    setItemPurchaseDate(getSaoPauloDateKey());
     setShowAddInsumoModal(false);
     alert(existing ? '✅ Reposição somada ao item existente no Depósito!' : '✅ Compra registrada no Depósito!');
   };
@@ -485,10 +489,21 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   };
 
   const handleRepeatQuantityChange = (value: string) => {
+    // Alterar a quantidade de potes NÃO altera automaticamente a receita.
+    // O usuário decide se mantém exatamente os ingredientes originais ou se
+    // deseja recalcular proporcionalmente pelo botão específico abaixo.
     setRepeatQuantityStr(value);
+  };
+
+  const handleScaleRepeatIngredients = () => {
     if (!repeatRecipe) return;
-    const quantity = Math.max(0, Math.floor(parseFormattedNumber(value)));
+    const quantity = Math.max(1, Math.floor(parseFormattedNumber(repeatQuantityStr)));
     setRepeatIngredients(buildScaledIngredients(repeatRecipe, quantity));
+  };
+
+  const handleRestoreOriginalRecipe = () => {
+    if (!repeatRecipe) return;
+    setRepeatIngredients(buildScaledIngredients(repeatRecipe, repeatRecipe.yieldsCount || 1));
   };
 
   const handleUpdateRepeatIngredient = (inventoryItemId: string, value: string) => {
@@ -793,7 +808,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 </select>
                 <p className="text-[10px] text-slate-500 mt-1">Reposição soma quantidade e valor ao cadastro existente; nenhuma compra antiga é apagada.</p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Nome do Insumo:</label>
                   <input
@@ -801,6 +816,16 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                     value={itemName}
                     onChange={(e) => setItemName(e.target.value)}
                     placeholder="Ex: Leite Condensado Moça, Bolacha Maizena"
+                    required
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Data da compra:</label>
+                  <input
+                    type="date"
+                    value={itemPurchaseDate}
+                    onChange={(e) => setItemPurchaseDate(e.target.value)}
                     required
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
                   />
@@ -1443,7 +1468,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                   onChange={(event) => handleRepeatQuantityChange(event.target.value)}
                   className="w-full p-3 bg-white border-2 border-amber-400 rounded-xl text-2xl font-black font-mono text-slate-900"
                 />
-                <small className="block mt-2 text-amber-800">Receita-base: {repeatRecipe.yieldsCount} potes</small>
+                <small className="block mt-2 text-amber-800">Receita-base: {repeatRecipe.yieldsCount} potes. Alterar este número não muda os ingredientes automaticamente.</small>
               </label>
 
               {(() => {
@@ -1472,9 +1497,15 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-black uppercase text-slate-700">Ingredientes recalculados</h4>
-                <span className="text-[10px] text-slate-500">Você pode corrigir o consumo real</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-black uppercase text-slate-700">Ingredientes da receita</h4>
+                  <span className="text-[10px] text-slate-500">Ao repetir, a receita original é mantida. Você decide se quer ajustar as quantidades.</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={handleRestoreOriginalRecipe} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black">Usar receita original</button>
+                  <button type="button" onClick={handleScaleRepeatIngredients} className="px-3 py-2 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-800 text-[10px] font-black">Ajustar proporcionalmente aos potes</button>
+                </div>
               </div>
               {repeatIngredients.map((row) => {
                 const inventoryItem = state.inventory.find((item) => item.id === row.inventoryItemId);
