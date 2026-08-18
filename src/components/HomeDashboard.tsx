@@ -55,7 +55,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     (sale) => sale.monthKey === selectedMonth || saoPauloDateKey(sale.saleDate).startsWith(selectedMonth)
   );
   const salesToday = state.sales.filter((sale) => saoPauloDateKey(sale.saleDate) === todayKey);
-  const availableReadyStock = getAvailableReadyStock(state.batches, state.sales);
+  const availableReadyStock = getAvailableReadyStock(state.batches, state.sales, state.utilitySettings);
   const soldToday = salesToday.reduce((total, sale) => total + (sale.quantity || 0), 0);
 
   const grossMonth = salesInMonth.reduce((total, sale) => total + (sale.totalPrice || 0), 0);

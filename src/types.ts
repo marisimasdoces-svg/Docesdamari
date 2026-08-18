@@ -169,6 +169,8 @@ export interface UtilitySettings {
   pixCity?: string;
   historicalRevenue?: number;
   historicalEstimatedCost?: number;
+  readyStockOpening?: number;
+  readyStockOpeningDate?: string;
 }
 
 export interface AppState {

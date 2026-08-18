@@ -1440,109 +1440,25 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
         </div>
       )}
 
-      {/* CARD FLUTUANTE: REPETIR RECEITA COM NOVO RENDIMENTO */}
+      {/* REPETIR RECEITA: fluxo propositalmente simples */}
       {repeatRecipe && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[60] flex items-center justify-center p-4">
-          <div className="bg-white border-2 border-amber-300 rounded-3xl p-5 sm:p-7 w-full max-w-3xl shadow-2xl space-y-5 max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
-            <div className="flex items-start justify-between border-b border-slate-200 pb-4">
+          <div className="bg-white border-2 border-amber-300 rounded-3xl p-6 w-full max-w-md shadow-2xl space-y-5 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-start justify-between">
               <div>
-                <div className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-800">
-                  <ChefHat className="w-4 h-4" /> Produzir novamente
-                </div>
-                <h3 className="text-xl sm:text-2xl font-black text-slate-900 mt-1">{repeatRecipe.sweetName}</h3>
-                <p className="text-xs text-slate-500 mt-1">A receita original permanece intacta. Confirme as quantidades realmente utilizadas.</p>
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-800"><ChefHat className="w-4 h-4" /> Repetir receita</span>
+                <h3 className="text-2xl font-black text-slate-900 mt-1">{repeatRecipe.sweetName}</h3>
+                <p className="text-xs text-slate-500 mt-1">A mesma receita será usada novamente. Informe apenas quantos potes você produziu.</p>
               </div>
-              <button type="button" onClick={() => setRepeatRecipe(null)} className="p-2 text-slate-400 hover:text-slate-900 rounded-full hover:bg-slate-100">
-                <X className="w-5 h-5" />
-              </button>
+              <button type="button" onClick={() => setRepeatRecipe(null)} className="p-2 text-slate-400 hover:text-slate-900 rounded-full hover:bg-slate-100"><X className="w-5 h-5" /></button>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <label className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-                <span className="block text-[10px] font-black uppercase text-amber-800 mb-2">Quantos potes serão produzidos?</span>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={repeatQuantityStr}
-                  onChange={(event) => handleRepeatQuantityChange(event.target.value)}
-                  className="w-full p-3 bg-white border-2 border-amber-400 rounded-xl text-2xl font-black font-mono text-slate-900"
-                />
-                <small className="block mt-2 text-amber-800">Receita-base: {repeatRecipe.yieldsCount} potes. Alterar este número não muda os ingredientes automaticamente.</small>
-              </label>
-
-              {(() => {
-                const qty = Math.max(1, Math.floor(parseFormattedNumber(repeatQuantityStr)));
-                const ingredientsCost = repeatIngredients.reduce((total, row) => {
-                  const inventoryItem = state.inventory.find((item) => item.id === row.inventoryItemId);
-                  const currentUnitCost = inventoryItem?.unitCost || 0;
-                  return total + parseFormattedNumber(row.quantityUsedStr) * currentUnitCost;
-                }, 0);
-                const indirect = (repeatRecipe.indirectCost || 0) * (qty / Math.max(1, repeatRecipe.yieldsCount));
-                const total = ingredientsCost + indirect;
-                const price = state.sweets.find((sweet) =>
-                  sweet.id === repeatRecipe.sweetId
-                  || sweet.recipeId === repeatRecipe.id
-                  || sweet.name.toLowerCase() === repeatRecipe.sweetName.toLowerCase()
-                )?.price || 0;
-                return (
-                  <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 grid grid-cols-2 gap-3">
-                    <div><span className="text-[9px] uppercase font-bold text-purple-700 block">Custo total</span><strong className="text-lg text-slate-900 font-mono">{formatCurrency(total)}</strong></div>
-                    <div><span className="text-[9px] uppercase font-bold text-purple-700 block">Custo por pote</span><strong className="text-lg text-slate-900 font-mono">{formatCurrency(total / qty)}</strong></div>
-                    <div><span className="text-[9px] uppercase font-bold text-purple-700 block">Lucro por pote</span><strong className="text-lg text-emerald-700 font-mono">{formatCurrency(price - total / qty)}</strong></div>
-                    <div><span className="text-[9px] uppercase font-bold text-purple-700 block">Lucro previsto</span><strong className="text-lg text-emerald-700 font-mono">{formatCurrency(price * qty - total)}</strong></div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h4 className="text-xs font-black uppercase text-slate-700">Ingredientes da receita</h4>
-                  <span className="text-[10px] text-slate-500">Ao repetir, a receita original é mantida. Você decide se quer ajustar as quantidades.</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={handleRestoreOriginalRecipe} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black">Usar receita original</button>
-                  <button type="button" onClick={handleScaleRepeatIngredients} className="px-3 py-2 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-800 text-[10px] font-black">Ajustar proporcionalmente aos potes</button>
-                </div>
-              </div>
-              {repeatIngredients.map((row) => {
-                const inventoryItem = state.inventory.find((item) => item.id === row.inventoryItemId);
-                const needed = parseFormattedNumber(row.quantityUsedStr);
-                const hasShortage = needed > (inventoryItem?.remainingQuantity || 0);
-                return (
-                  <div key={row.inventoryItemId} className={`grid grid-cols-[1fr_110px] gap-3 items-center border rounded-xl p-3 ${hasShortage ? 'bg-rose-50 border-rose-300' : 'bg-slate-50 border-slate-200'}`}>
-                    <div>
-                      <strong className="block text-xs text-slate-900">{row.inventoryItemName}</strong>
-                      <span className={`text-[10px] ${hasShortage ? 'text-rose-700 font-bold' : 'text-slate-500'}`}>
-                        Disponível: {(inventoryItem?.remainingQuantity || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} {row.unit}
-                        {hasShortage ? ' · quantidade insuficiente' : ''}
-                      </span>
-                    </div>
-                    <label className="relative">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={row.quantityUsedStr}
-                        onChange={(event) => handleUpdateRepeatIngredient(row.inventoryItemId, event.target.value)}
-                        className={`w-full p-2 pr-10 bg-white border rounded-lg font-mono font-bold text-right ${hasShortage ? 'border-rose-400 text-rose-800' : 'border-slate-300 text-slate-900'}`}
-                      />
-                      <span className="absolute right-2 top-2.5 text-[9px] text-slate-500">{row.unit}</span>
-                    </label>
-                  </div>
-                );
-              })}
-            </div>
-
-            <button
-              type="button"
-              onClick={handleRegisterTodayProduction}
-              disabled={repeatIngredients.some((row) => parseFormattedNumber(row.quantityUsedStr) > (state.inventory.find((item) => item.id === row.inventoryItemId)?.remainingQuantity || 0))}
-              className="w-full py-3.5 bg-amber-500 enabled:hover:bg-amber-600 disabled:bg-slate-300 disabled:text-slate-500 text-slate-950 font-black text-sm rounded-xl shadow-md disabled:cursor-not-allowed"
-            >
-              Confirmar produção e baixar ingredientes
-            </button>
+            <label className="block bg-amber-50 border border-amber-200 rounded-2xl p-4">
+              <span className="block text-[10px] font-black uppercase text-amber-800 mb-2">Quantidade produzida</span>
+              <input type="number" min="1" step="1" value={repeatQuantityStr} onChange={(event) => handleRepeatQuantityChange(event.target.value)} className="w-full p-3 bg-white border-2 border-amber-400 rounded-xl text-3xl font-black font-mono text-slate-900 text-center" />
+              <small className="block mt-2 text-center text-amber-800">Receita original: {repeatRecipe.yieldsCount} potes</small>
+            </label>
+            <button type="button" onClick={handleRegisterTodayProduction} className="w-full py-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm rounded-xl shadow-md">Confirmar produção</button>
+            <button type="button" onClick={() => { setRepeatRecipe(null); setShowNewRecipeModal(true); }} className="w-full text-xs font-bold text-slate-500 hover:text-slate-800">Preciso alterar a receita</button>
           </div>
         </div>
       )}

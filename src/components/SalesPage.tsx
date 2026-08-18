@@ -18,7 +18,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { PixPaymentModal } from './PixPaymentModal';
-import { reconcileReadyStockBatches } from '../lib/readyStock';
+import { getAvailableReadyStock, reconcileReadyStockBatches } from '../lib/readyStock';
 
 interface SalesPageProps {
   state: AppState;
@@ -71,6 +71,8 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   const [editUnitPrice, setEditUnitPrice] = useState<number>(13.0);
   const [editStatus, setEditStatus] = useState<'paid' | 'pending'>('pending');
   const [showInstantPix, setShowInstantPix] = useState(false);
+  const [instantPixAmount, setInstantPixAmount] = useState(0);
+  const [instantPixDescription, setInstantPixDescription] = useState('Pagamento Doces da Mari');
 
   const financialSettings = state.utilitySettings?.find((item) => item.id === 'financial-settings');
   const pixKey = financialSettings?.pixKey || 'mdamerso@hotmail.com';
@@ -155,9 +157,9 @@ export const SalesPage: React.FC<SalesPageProps> = ({
   const batchesForSelectedSweet = activeBatches
     .filter((b) => selectedSweet && (b.sweetId === selectedSweet.id || b.sweetName.toLowerCase() === selectedSweet.name.toLowerCase()))
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  const sweetStockRemaining = batchesForSelectedSweet.reduce(
-    (total, batch) => total + Math.max(0, batch.totalProduced - batch.totalSold), 0
-  );
+  const sweetStockRemaining = selectedSweet
+    ? getAvailableReadyStock(state.batches, state.sales, state.utilitySettings, selectedSweet.id, selectedSweet.name)
+    : getAvailableReadyStock(state.batches, state.sales, state.utilitySettings);
 
   const allocateReadyStock = (batches: typeof state.batches, sweetId: string, sweetName: string, quantity: number) => {
     let remaining = quantity;
@@ -177,7 +179,12 @@ export const SalesPage: React.FC<SalesPageProps> = ({
       weightedCost += take * (batch.unitCost || 0);
       return { ...batch, totalSold: batch.totalSold + take, updatedAt: new Date().toISOString() };
     });
-    return { ok: remaining === 0, batches: updated, allocations, unitCost: quantity > 0 ? weightedCost / quantity : 0 };
+    if (remaining > 0) {
+      const fallback = [...eligible].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      if (fallback) allocations.push({ batchId: fallback.id, quantity: remaining });
+      remaining = 0;
+    }
+    return { ok: true, batches: updated, allocations, unitCost: quantity > 0 && weightedCost > 0 ? weightedCost / quantity : 0 };
   };
 
   // Handle buyer dropdown select
@@ -281,6 +288,11 @@ export const SalesPage: React.FC<SalesPageProps> = ({
     };
 
     onStateChange(newState);
+    if (isPaid && paymentMethod === 'pix') {
+      setInstantPixAmount(totalPrice);
+      setInstantPixDescription(`${buyer.name} · ${quantity}x ${sweet.name}`);
+      setShowInstantPix(true);
+    }
 
     // Reset form
     setSelectedBuyerId('');
@@ -549,14 +561,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
             <span>📅 Lançar Vendas Anteriores</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setShowInstantPix(true)}
-            className="w-full py-3.5 bg-cyan-600 hover:bg-cyan-700 text-white font-black text-sm rounded-2xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
-          >
-            <QrCode className="w-5 h-5" />
-            <span>PIX para pagar na hora</span>
-          </button>
+
 
           <button
             type="button"
@@ -1386,7 +1391,7 @@ export const SalesPage: React.FC<SalesPageProps> = ({
           </div>
         </div>
       )}
-      <PixPaymentModal open={showInstantPix} onClose={() => setShowInstantPix(false)} amount={0} description="QR Code geral para o cliente pagar na hora. O valor é informado no aplicativo do banco." pixKey={pixKey} recipientName={pixRecipientName} city={pixCity} />
+      <PixPaymentModal open={showInstantPix} onClose={() => setShowInstantPix(false)} amount={instantPixAmount} description={instantPixDescription} pixKey={pixKey} recipientName={pixRecipientName} city={pixCity} />
     </div>
   );
 };

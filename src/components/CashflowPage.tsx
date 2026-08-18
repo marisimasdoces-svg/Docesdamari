@@ -67,10 +67,16 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, onStateChange
   const monthPurchases = state.expenses.filter((expense) => expenseMonthKey(expense) === currentMonthKey);
   const monthRevenue = monthSales.reduce((total, sale) => total + sale.totalPrice, 0);
   const monthReceived = receivedFromSales(monthSales) + monthPayments.reduce((total, payment) => total + payment.amountPaid, 0);
-  const monthPending = monthSales.filter((sale) => sale.paymentStatus === 'pending').reduce((total, sale) => total + sale.totalPrice, 0);
+  const monthPending = Math.max(0, monthRevenue - monthReceived);
   const monthPurchasesTotal = monthPurchases.reduce((total, expense) => total + expense.totalCost, 0);
-  const monthSoldCost = monthSales.reduce((total, sale) => total + saleCost(state, sale), 0);
-  const monthProfit = monthRevenue - monthSoldCost;
+  const monthProductionIndirect = state.batches
+    .filter((batch) => !batch.deletedAt && (batch.startDate || batch.createdAt).slice(0, 7) === currentMonthKey)
+    .reduce((sum, batch) => {
+      const ingredientCost = (batch.ingredientsUsed || []).reduce((total, ingredient) => total + (ingredient.estimatedCost || 0), 0);
+      return sum + Math.max(0, (batch.productionCost || 0) - ingredientCost);
+    }, 0);
+  const monthExpenses = monthPurchasesTotal + monthProductionIndirect;
+  const monthProfit = monthRevenue - monthExpenses;
 
   const yearSales = state.sales.filter((sale) => sale.monthKey.startsWith(selectedYear));
   const yearPayments = state.payments.filter((payment) => payment.monthKey.startsWith(selectedYear));
@@ -102,7 +108,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, onStateChange
     const previous = financialSettings;
     const record: UtilitySettings = {
       id: 'financial-settings', referenceMonth: 'financial', gasCylinderPrice: 0, electricityBill: 0, electricityKwh: 0, waterBill: 0, productionCycles: 0,
-      ...(previous || {}), openingBalance: parseMoney(openingBalanceStr), openingDate: nowIso, pixKey: pixKey.trim(), pixRecipientName: pixRecipientName.trim(), pixCity: pixCity.trim().toUpperCase(), updatedAt: nowIso,
+      ...(previous || {}), openingBalance: parseMoney(openingBalanceStr), openingDate: nowIso, readyStockOpening: previous?.readyStockOpening ?? 13, readyStockOpeningDate: previous?.readyStockOpeningDate || nowIso, pixKey: pixKey.trim(), pixRecipientName: pixRecipientName.trim(), pixCity: pixCity.trim().toUpperCase(), updatedAt: nowIso,
     };
     const utilitySettings = previous ? state.utilitySettings.map((item) => item.id === record.id ? record : item) : [record, ...(state.utilitySettings || [])];
     onStateChange({ ...state, utilitySettings }); setShowSetup(false);
@@ -134,10 +140,10 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, onStateChange
           <div className="flex gap-2"><button onClick={() => setShowHistory(!showHistory)} className="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold">Meses anteriores</button><button onClick={() => setShowSetup(!showSetup)} className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold flex items-center gap-1.5"><Settings2 className="w-4 h-4"/> Saldo / PIX</button></div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="border border-indigo-200 bg-indigo-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black text-indigo-700">Vendas no ano</span><strong className="block text-2xl font-black mt-1">{formatCurrency(yearRevenue)}</strong><small className="text-indigo-700">Reais + histórico consolidado</small></div>
-          <div className="border border-emerald-200 bg-emerald-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black text-emerald-700">Lucro acumulado / conta</span><strong className="block text-2xl font-black mt-1">{financialSettings ? formatCurrency(accumulatedBalance) : 'Definir saldo'}</strong><small className="text-emerald-700">Saldo-base + movimentações posteriores</small></div>
-          <div className="border border-orange-200 bg-orange-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black text-orange-700">Compras no ano</span><strong className="block text-2xl font-black mt-1">{formatCurrency(yearPurchasesTotal)}</strong><small className="text-orange-700">Aquisições efetivamente pagas</small></div>
-          <div className="border border-amber-200 bg-amber-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black text-amber-700">A receber</span><strong className="block text-2xl font-black mt-1">{formatCurrency(yearPending)}</strong><small className="text-amber-700">Vendas ainda pendentes</small></div>
+          <div className="border border-emerald-200 bg-emerald-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black text-emerald-700">Total recebido</span><strong className="block text-2xl font-black mt-1">{financialSettings ? formatCurrency(accumulatedBalance) : 'Definir saldo'}</strong><small className="text-emerald-700">Saldo real da conta dos doces</small></div>
+          <div className="border border-orange-200 bg-orange-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black text-orange-700">Gasto com compras</span><strong className="block text-2xl font-black mt-1">{formatCurrency(yearPurchasesTotal)}</strong><small className="text-orange-700">Compras registradas no ano</small></div>
+          <div className="border border-amber-200 bg-amber-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black text-amber-700">A receber no mês</span><strong className="block text-2xl font-black mt-1">{formatCurrency(monthPending)}</strong><small className="text-amber-700">Só vendas já realizadas e ainda não pagas</small></div>
+          <div className="border border-indigo-200 bg-indigo-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black text-indigo-700">Projeção de lucro</span><strong className="block text-2xl font-black mt-1">{financialSettings ? formatCurrency(accumulatedBalance + monthPending) : 'Definir saldo'}</strong><small className="text-indigo-700">Total recebido + a receber</small></div>
         </div>
       </section>
 
@@ -147,14 +153,13 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({ state, onStateChange
 
       <section className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4"><div><span className="flex items-center gap-2 text-purple-700 font-bold text-xs uppercase"><Calendar className="w-4 h-4"/> Visão mensal</span><h3 className="text-2xl font-black text-slate-900 mt-1">{formatMonthShort(currentMonthKey)}</h3></div><div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-1.5 rounded-2xl"><button onClick={()=>moveMonth(-1)} className="p-2"><ChevronLeft className="w-4 h-4"/></button><select value={currentMonthKey} onChange={(e)=>setCurrentMonthKey(e.target.value)} className="bg-transparent font-black text-sm px-2">{monthOptions.map((month)=><option key={month.key} value={month.key}>{month.label}</option>)}</select><button onClick={()=>moveMonth(1)} className="p-2"><ChevronRight className="w-4 h-4"/></button></div></div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div className="border border-indigo-200 bg-indigo-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black">Vendas</span><strong className="block text-2xl font-black">{formatCurrency(monthRevenue)}</strong><small>{monthSales.reduce((s,x)=>s+x.quantity,0)} potes vendidos</small></div>
-          <div className="border border-purple-200 bg-purple-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black">Lucro dos doces</span><strong className="block text-2xl font-black">{formatCurrency(monthProfit)}</strong><small>Vendas − custo dos potes vendidos</small></div>
-          <div className="border border-orange-200 bg-orange-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black">Compras</span><strong className="block text-2xl font-black">{formatCurrency(monthPurchasesTotal)}</strong><small>Dinheiro gasto em novas aquisições</small></div>
-          <div className="border border-emerald-200 bg-emerald-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black">Recebido</span><strong className="block text-2xl font-black">{formatCurrency(monthReceived)}</strong><small>{formatCurrency(monthPending)} ainda a receber</small></div>
+          <div className="border border-orange-200 bg-orange-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black">Gastos mensais</span><strong className="block text-2xl font-black">{formatCurrency(monthExpenses)}</strong><small>Compras + água, luz e gás da produção</small></div>
+          <div className="border border-emerald-200 bg-emerald-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black">Já recebido</span><strong className="block text-2xl font-black">{formatCurrency(monthReceived)}</strong><small>Vendas quitadas no mês</small></div>
+          <div className="border border-amber-200 bg-amber-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black">A receber</span><strong className="block text-2xl font-black">{formatCurrency(monthPending)}</strong><small>Vendas fiadas ainda pendentes</small></div>
+          <div className="border border-purple-200 bg-purple-50 rounded-2xl p-4"><span className="text-[10px] uppercase font-black">Lucro do mês</span><strong className="block text-2xl font-black">{formatCurrency(monthProfit)}</strong><small>Vendas − gastos mensais</small></div>
         </div>
-        <button type="button" onClick={()=>setShowDetails(!showDetails)} className="text-xs font-black text-slate-600 flex items-center gap-1">Ver detalhes matemáticos <ChevronDown className={`w-4 h-4 transition-transform ${showDetails ? 'rotate-180' : ''}`}/></button>
-        {showDetails && <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-50 rounded-2xl p-4 text-xs"><div><span className="text-slate-500">Custo dos potes vendidos</span><strong className="block text-lg">{formatCurrency(monthSoldCost)}</strong></div><div><span className="text-slate-500">Fluxo financeiro do mês</span><strong className="block text-lg">{formatCurrency(monthReceived-monthPurchasesTotal)}</strong></div><div><span className="text-slate-500">Lucro conhecido do ano</span><strong className="block text-lg">{formatCurrency(yearKnownProfit)}</strong></div><div><span className="text-slate-500">Recebido registrado no ano</span><strong className="block text-lg">{formatCurrency(yearReceived)}</strong></div></div>}
       </section>
     </div>
   );
