@@ -11,7 +11,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 
-// CASHFLOW_V3_SIMPLIFICADO_2026_08_18
+// CASHFLOW_V4_MARCO_ZERO_2026_08_18
 // Regra: saldo atual = dinheiro real; gastos = compras reais após o marco;
 // recebido e a receber são informativos; saldo projetado = saldo atual + a receber.
 // Custo do pote permanece somente na Produção/precificação.
@@ -175,7 +175,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
     if (expense.deletedAt) return false;
     if (expenseMonthKey(expense) !== currentMonthKey) return false;
 
-    if (!openingDateMs) return true;
+    if (!openingDateMs) return false;
 
     const expenseMs = new Date(expense.date).getTime();
     if (Number.isNaN(expenseMs)) return false;
@@ -201,7 +201,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
   const totalPostAnchorExpenses = state.expenses
     .filter((expense) => {
       if (expense.deletedAt) return false;
-      if (!openingDateMs) return true;
+      if (!openingDateMs) return false;
       const expenseMs = new Date(expense.date).getTime();
       return !Number.isNaN(expenseMs) && expenseMs > openingDateMs;
     })
@@ -338,13 +338,13 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
 
           <div className="border border-orange-200 bg-orange-50 rounded-2xl p-4">
             <span className="text-[10px] uppercase font-black text-orange-700">
-              Gastos após o marco
+              Gastos do mês
             </span>
             <strong className="block text-2xl font-black mt-1">
               {formatCurrency(totalPostAnchorExpenses)}
             </strong>
             <small className="text-orange-700">
-              Só compras pagas depois do saldo informado
+              Somente compras registradas depois do marco financeiro
             </small>
           </div>
 
@@ -510,7 +510,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
             <strong className="block text-xl font-black mt-1">
               {formatCurrency(monthExpenses)}
             </strong>
-            <small className="text-orange-700">Só compras pagas após o marco</small>
+            <small className="text-orange-700">Somente compras registradas depois do marco financeiro</small>
           </div>
 
           <div className="border border-sky-200 bg-sky-50 rounded-2xl p-4">
