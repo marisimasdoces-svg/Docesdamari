@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AppState, UtilitySettings, User } from '../types';
 import { formatCurrency, formatMonthShort } from '../lib/storage';
+import { db, doc, setDoc, waitForPendingWrites } from '../lib/firebase';
 import {
   Calendar,
   ChevronLeft,
@@ -11,7 +12,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 
-// CASHFLOW_V4_MARCO_ZERO_2026_08_18
+// CASHFLOW_V5_PIX_PERSISTENTE_2026_08_18
 // Regra: saldo atual = dinheiro real; gastos = compras reais após o marco;
 // recebido e a receber são informativos; saldo projetado = saldo atual + a receber.
 // Custo do pote permanece somente na Produção/precificação.
@@ -207,7 +208,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
     })
     .reduce((sum, expense) => sum + expense.totalCost, 0);
 
-  const saveFinancialSetup = () => {
+  const saveFinancialSetup = async () => {
     const nowIso = new Date().toISOString();
     const previous = financialSettings;
 
@@ -236,9 +237,20 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
         )
       : [record, ...(state.utilitySettings || [])];
 
+    // Atualiza a interface imediatamente.
     onStateChange({ ...state, utilitySettings });
-    setShowSetup(false);
-    alert('✅ Saldo atual salvo como novo marco financeiro.');
+
+    // Persistência crítica: grava o marco financeiro diretamente no Firestore
+    // e aguarda a confirmação antes de informar sucesso ao usuário.
+    try {
+      await setDoc(doc(db, 'utilitySettings', 'financial-settings'), record, { merge: true });
+      await waitForPendingWrites(db);
+      setShowSetup(false);
+      alert('✅ Saldo / PIX salvo e confirmado no Firebase.');
+    } catch (error) {
+      console.error('Erro ao persistir Saldo / PIX:', error);
+      alert('⚠️ O valor apareceu na tela, mas o Firebase não confirmou a gravação. Não feche o app e tente salvar novamente.');
+    }
   };
 
   const saveHistoricalMonth = () => {
