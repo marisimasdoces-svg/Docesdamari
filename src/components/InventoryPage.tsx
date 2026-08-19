@@ -165,12 +165,34 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
 
   const handleDeleteInsumo = (id: string) => {
     const nowIso = new Date().toISOString();
+    const itemToDelete = state.inventory.find((item) => item.id === id);
+
     const updatedInventory = state.inventory.map((item) =>
       item.id === id ? { ...item, deletedAt: nowIso, updatedAt: nowIso } : item
     );
+
+    // INVENTORY_DELETE_EXPENSE_REVERSAL_V9_2026_08_18
+    // Excluir um item/compra do Depósito também exclui o gasto correspondente.
+    // Para compras novas usamos o vínculo por inventoryItemId.
+    // Para compras antigas (criadas antes desse vínculo), usamos o nome da compra
+    // como compatibilidade, permitindo estornar inclusive o teste "Parafuso".
+    const updatedExpenses = state.expenses.map((expense) => {
+      if (expense.deletedAt || !itemToDelete) return expense;
+
+      const linkedById = expense.notes?.includes(`inventoryItemId=${id}`) ?? false;
+      const linkedLegacy =
+        expense.description === `Compra: ${itemToDelete.name}` ||
+        expense.description.startsWith(`Compra: ${itemToDelete.name} (`);
+
+      return linkedById || linkedLegacy
+        ? { ...expense, deletedAt: nowIso, updatedAt: nowIso }
+        : expense;
+    });
+
     const newState: AppState = {
       ...state,
       inventory: updatedInventory,
+      expenses: updatedExpenses,
     };
 
     onStateChange(newState);
@@ -374,6 +396,9 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       date: purchaseDateIso,
       updatedAt: nowIso,
       monthKey: purchaseDateKey.slice(0, 7),
+      // INVENTORY_EXPENSE_LINK_V9_2026_08_18
+      // Vínculo explícito para que excluir a compra/item também estorne o Caixa.
+      notes: `inventoryItemId=${newInsumo.id}`,
     };
 
     const newState: AppState = {
