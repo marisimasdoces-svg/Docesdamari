@@ -72,7 +72,14 @@ export default function App() {
   useEffect(() => {
     if (!appState.currentUser) return;
     const financial = appState.utilitySettings?.find((item) => item.id === 'financial-settings');
-    if (financial?.readyStockLedgerVersion === READY_STOCK_LEDGER_VERSION) return;
+
+    // APP_V7_REAL_APP_WAIT_FIREBASE_FINANCIAL_2026_08_18
+    // O App principal deve esperar o financial-settings real chegar do Firebase.
+    // Se utilitySettings ainda estiver vazio durante a inicialização, não cria
+    // um registro financeiro local que possa sobrescrever saldo/PIX persistidos.
+    if (!financial) return;
+
+    if (financial.readyStockLedgerVersion === READY_STOCK_LEDGER_VERSION) return;
 
     const correctedSettings = ensureReadyStockLedgerBaseline(appState.utilitySettings || []);
     const correctedState: AppState = { ...appState, utilitySettings: correctedSettings };
