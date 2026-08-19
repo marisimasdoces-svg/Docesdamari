@@ -12,7 +12,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 
-// CASHFLOW_V5_PIX_PERSISTENTE_2026_08_18
+// CASHFLOW_V8_EXPENSE_TIMESTAMP_FIX_2026_08_18
 // Regra: saldo atual = dinheiro real; gastos = compras reais após o marco;
 // recebido e a receber são informativos; saldo projetado = saldo atual + a receber.
 // Custo do pote permanece somente na Produção/precificação.
@@ -50,6 +50,12 @@ const monthKeyFromIso = (iso?: string) => {
     year: 'numeric',
     month: '2-digit',
   }).format(parsed);
+};
+
+const expenseMovementTime = (expense: { updatedAt?: string; date?: string }) => {
+  const source = expense.updatedAt || expense.date;
+  if (!source) return NaN;
+  return new Date(source).getTime();
 };
 
 export const CashflowPage: React.FC<CashflowPageProps> = ({
@@ -133,7 +139,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
     ? state.expenses
         .filter((expense) => {
           if (expense.deletedAt) return false;
-          const expenseMs = new Date(expense.date).getTime();
+          const expenseMs = expenseMovementTime(expense);
           return !Number.isNaN(expenseMs) && expenseMs > openingDateMs;
         })
         .reduce((sum, expense) => sum + expense.totalCost, 0)
@@ -178,7 +184,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
 
     if (!openingDateMs) return false;
 
-    const expenseMs = new Date(expense.date).getTime();
+    const expenseMs = expenseMovementTime(expense);
     if (Number.isNaN(expenseMs)) return false;
 
     if (currentMonthKey === openingMonthKey) {
@@ -203,7 +209,7 @@ export const CashflowPage: React.FC<CashflowPageProps> = ({
     .filter((expense) => {
       if (expense.deletedAt) return false;
       if (!openingDateMs) return false;
-      const expenseMs = new Date(expense.date).getTime();
+      const expenseMs = expenseMovementTime(expense);
       return !Number.isNaN(expenseMs) && expenseMs > openingDateMs;
     })
     .reduce((sum, expense) => sum + expense.totalCost, 0);
