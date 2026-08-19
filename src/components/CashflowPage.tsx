@@ -1,7 +1,20 @@
-import React, { useState } from 'react';
-import { AppState, Sale, User } from '../types';
+import React, { useMemo, useState } from 'react';
+import { AppState, UtilitySettings, User } from '../types';
 import { formatCurrency, formatMonthShort } from '../lib/storage';
-import { BarChart3, Calendar, ChevronLeft, ChevronRight, TrendingUp } from 'lucide-react';
+import {
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Landmark,
+  Save,
+  Settings2,
+  TrendingUp,
+} from 'lucide-react';
+
+// CASHFLOW_V3_SIMPLIFICADO_2026_08_18
+// Regra: saldo atual = dinheiro real; gastos = compras reais após o marco;
+// recebido e a receber são informativos; saldo projetado = saldo atual + a receber.
+// Custo do pote permanece somente na Produção/precificação.
 
 interface CashflowPageProps {
   state: AppState;
@@ -10,202 +23,531 @@ interface CashflowPageProps {
   currentUser: User;
 }
 
-const saleCost = (state: AppState, sale: Sale) => {
-  if (typeof sale.estimatedUnitCost === 'number' && sale.estimatedUnitCost >= 0) {
-    return sale.quantity * sale.estimatedUnitCost;
+const parseMoney = (value: string) =>
+  Number(value.replace(/\./g, '').replace(',', '.')) || 0;
+
+const expenseMonthKey = (expense: { date?: string; monthKey?: string }) => {
+  if (expense.date) {
+    const parsed = new Date(expense.date);
+    if (!Number.isNaN(parsed.getTime())) {
+      return new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+      }).format(parsed);
+    }
   }
-  const batch = state.batches.find((item) => item.id === sale.batchId);
-  if (typeof batch?.unitCost === 'number' && batch.unitCost >= 0) {
-    return sale.quantity * batch.unitCost;
-  }
-  const recipe = state.recipes.find(
-    (item) => item.sweetId === sale.sweetId || item.sweetName.toLowerCase() === sale.sweetName.toLowerCase()
-  );
-  return sale.quantity * (recipe?.calculatedUnitCost || 0);
+  return expense.monthKey || '';
 };
 
-const receivedFromSales = (sales: Sale[]) => sales
-  .filter((sale) => sale.isPaidImmediately)
-  .reduce((total, sale) => total + sale.totalPrice, 0);
+const monthKeyFromIso = (iso?: string) => {
+  if (!iso) return '';
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+  }).format(parsed);
+};
 
-export const CashflowPage: React.FC<CashflowPageProps> = ({ state, selectedMonth: initialMonth }) => {
+export const CashflowPage: React.FC<CashflowPageProps> = ({
+  state,
+  onStateChange,
+  selectedMonth: initialMonth,
+}) => {
   const [currentMonthKey, setCurrentMonthKey] = useState(initialMonth || '2026-08');
+  const [showSetup, setShowSetup] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const financialSettings = state.utilitySettings?.find(
+    (item) => item.id === 'financial-settings'
+  );
+
+  const [openingBalanceStr, setOpeningBalanceStr] = useState(
+    String(financialSettings?.openingBalance ?? '').replace('.', ',')
+  );
+  const [pixKey, setPixKey] = useState(
+    financialSettings?.pixKey || 'mdamerso@hotmail.com'
+  );
+  const [pixRecipientName, setPixRecipientName] = useState(
+    financialSettings?.pixRecipientName || 'Mariane Simas'
+  );
+  const [pixCity, setPixCity] = useState(
+    financialSettings?.pixCity || 'SANTANA LIVRAM'
+  );
+
+  const [historyMonth, setHistoryMonth] = useState('2026-01');
+  const [historyRevenueStr, setHistoryRevenueStr] = useState('');
+  const [historyCostStr, setHistoryCostStr] = useState('');
 
   React.useEffect(() => {
     if (initialMonth) setCurrentMonthKey(initialMonth);
   }, [initialMonth]);
 
-  const monthOptions = React.useMemo(() => {
-    const names = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const monthOptions = useMemo(() => {
+    const names = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+    ];
     return Array.from({ length: 60 }, (_, index) => {
       const year = 2026 + Math.floor(index / 12);
       const month = (index % 12) + 1;
       const mm = String(month).padStart(2, '0');
-      return { key: `${year}-${mm}`, label: `${names[month - 1]} / ${year}` };
+      return {
+        key: `${year}-${mm}`,
+        label: `${names[month - 1]} / ${year}`,
+      };
     });
   }, []);
 
-  const selectedYear = currentMonthKey.slice(0, 4);
-  const yearSales = state.sales.filter((sale) => sale.monthKey.startsWith(selectedYear));
-  const yearPayments = state.payments.filter((payment) => payment.monthKey.startsWith(selectedYear));
-  const yearPurchases = state.expenses.filter((expense) => expense.monthKey.startsWith(selectedYear));
-  const yearBatches = state.batches.filter((batch) => (batch.createdAt || batch.startDate).startsWith(selectedYear));
+  const openingBalance = financialSettings?.openingBalance || 0;
+  const openingDateMs = financialSettings?.openingDate
+    ? new Date(financialSettings.openingDate).getTime()
+    : null;
+  const openingMonthKey = monthKeyFromIso(financialSettings?.openingDate);
 
-  const yearRevenue = yearSales.reduce((total, sale) => total + sale.totalPrice, 0);
-  const yearReceived = receivedFromSales(yearSales) + yearPayments.reduce((total, payment) => total + payment.amountPaid, 0);
-  const yearPending = yearSales.filter((sale) => sale.paymentStatus === 'pending').reduce((total, sale) => total + sale.totalPrice, 0);
-  const yearStockPurchases = yearPurchases.reduce((total, expense) => total + expense.totalCost, 0);
-  const yearSoldCost = yearSales.reduce((total, sale) => total + saleCost(state, sale), 0);
-  const yearRecordedProductionCost = yearBatches.reduce((total, batch) => total + (batch.productionCost || 0), 0);
-  const yearLegacyProductionCost = yearBatches.reduce((total, batch) => {
-    if (typeof batch.productionCost === 'number') return total;
-    const recipe = state.recipes.find((item) => item.id === batch.recipeId || item.sweetId === batch.sweetId || item.sweetName.toLowerCase() === batch.sweetName.toLowerCase());
-    return total + batch.totalProduced * (recipe?.calculatedUnitCost || 0);
-  }, 0);
-  const yearProductionCost = yearRecordedProductionCost + yearLegacyProductionCost;
-  const yearExpectedProfit = yearRevenue - yearSoldCost;
+  const postAnchorImmediate = openingDateMs
+    ? state.sales
+        .filter(
+          (sale) =>
+            !sale.deletedAt &&
+            sale.isPaidImmediately &&
+            new Date(sale.saleDate).getTime() > openingDateMs
+        )
+        .reduce((sum, sale) => sum + sale.totalPrice, 0)
+    : 0;
 
-  // Nova lógica de caixa:
-  // O dinheiro que permanece na conta do negócio é tratado como lucro acumulado disponível.
-  // Compras de estoque são saídas de caixa, mas o que ainda existe no depósito continua sendo patrimônio.
-  const allReceived = receivedFromSales(state.sales) + state.payments.reduce((total, payment) => total + payment.amountPaid, 0);
-  const allStockPurchases = state.expenses.reduce((total, expense) => total + expense.totalCost, 0);
-  const accumulatedAvailableProfit = allReceived - allStockPurchases;
+  const postAnchorPayments = openingDateMs
+    ? state.payments
+        .filter(
+          (payment) =>
+            !payment.deletedAt &&
+            new Date(payment.paymentDate).getTime() > openingDateMs
+        )
+        .reduce((sum, payment) => sum + payment.amountPaid, 0)
+    : 0;
 
-  const inventoryValue = state.inventory.reduce((total, item) => {
-    const unitCost = item.totalQuantityBought > 0 ? item.totalCostPaid / item.totalQuantityBought : item.unitCost;
-    return total + item.remainingQuantity * unitCost;
-  }, 0);
+  const postAnchorPurchases = openingDateMs
+    ? state.expenses
+        .filter((expense) => {
+          if (expense.deletedAt) return false;
+          const expenseMs = new Date(expense.date).getTime();
+          return !Number.isNaN(expenseMs) && expenseMs > openingDateMs;
+        })
+        .reduce((sum, expense) => sum + expense.totalCost, 0)
+    : 0;
 
-  const businessPatrimony = accumulatedAvailableProfit + inventoryValue;
+  const currentBalance =
+    openingBalance +
+    postAnchorImmediate +
+    postAnchorPayments -
+    postAnchorPurchases;
 
-  const monthSales = state.sales.filter((sale) => sale.monthKey === currentMonthKey);
-  const monthPayments = state.payments.filter((payment) => payment.monthKey === currentMonthKey);
-  const monthPurchases = state.expenses.filter((expense) => expense.monthKey === currentMonthKey);
-  const monthBatches = state.batches.filter((batch) => (batch.createdAt || batch.startDate).startsWith(currentMonthKey));
-  const monthRevenue = monthSales.reduce((total, sale) => total + sale.totalPrice, 0);
-  const monthReceived = receivedFromSales(monthSales) + monthPayments.reduce((total, payment) => total + payment.amountPaid, 0);
-  const monthPending = monthSales.filter((sale) => sale.paymentStatus === 'pending').reduce((total, sale) => total + sale.totalPrice, 0);
-  const monthStockPurchases = monthPurchases.reduce((total, expense) => total + expense.totalCost, 0);
-  const monthSoldCost = monthSales.reduce((total, sale) => total + saleCost(state, sale), 0);
-  const monthExpectedProfit = monthRevenue - monthSoldCost;
-  const monthCashMovement = monthReceived - monthStockPurchases;
-  const monthProducedUnits = monthBatches.reduce((total, batch) => total + batch.totalProduced, 0);
-  const monthSoldUnits = monthSales.reduce((total, sale) => total + sale.quantity, 0);
+  const monthSales = state.sales.filter(
+    (sale) => !sale.deletedAt && sale.monthKey === currentMonthKey
+  );
 
-  const weekLabels = ['1–7', '8–14', '15–21', '22–28', '29–31'];
-  const weeklyChart = weekLabels.map((label, index) => {
-    const sales = monthSales.filter((sale) => {
-      const day = Number(new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit' }).format(new Date(sale.saleDate)));
-      return Math.min(4, Math.floor((Math.max(1, day) - 1) / 7)) === index;
-    });
-    const faturamento = sales.reduce((total, sale) => total + sale.totalPrice, 0);
-    const recebido = receivedFromSales(sales) + monthPayments.filter((payment) => {
-      const day = Number(new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit' }).format(new Date(payment.paymentDate)));
-      return Math.min(4, Math.floor((Math.max(1, day) - 1) / 7)) === index;
-    }).reduce((total, payment) => total + payment.amountPaid, 0);
-    return { label, faturamento, recebido };
+  const monthRevenue = monthSales.reduce(
+    (total, sale) => total + sale.totalPrice,
+    0
+  );
+
+  const monthImmediateReceived = monthSales
+    .filter((sale) => sale.isPaidImmediately)
+    .reduce((total, sale) => total + sale.totalPrice, 0);
+
+  const monthPayments = state.payments
+    .filter(
+      (payment) =>
+        !payment.deletedAt && payment.monthKey === currentMonthKey
+    )
+    .reduce((total, payment) => total + payment.amountPaid, 0);
+
+  const monthReceived = Math.min(
+    monthRevenue,
+    monthImmediateReceived + monthPayments
+  );
+
+  const monthPending = Math.max(0, monthRevenue - monthReceived);
+
+  const monthPurchasesAfterAnchor = state.expenses.filter((expense) => {
+    if (expense.deletedAt) return false;
+    if (expenseMonthKey(expense) !== currentMonthKey) return false;
+
+    if (!openingDateMs) return true;
+
+    const expenseMs = new Date(expense.date).getTime();
+    if (Number.isNaN(expenseMs)) return false;
+
+    if (currentMonthKey === openingMonthKey) {
+      return expenseMs > openingDateMs;
+    }
+
+    if (currentMonthKey > openingMonthKey) {
+      return true;
+    }
+
+    return false;
   });
-  const graphMaximum = Math.max(1, ...weeklyChart.flatMap((week) => [week.faturamento, week.recebido]));
+
+  const monthExpenses = monthPurchasesAfterAnchor.reduce(
+    (total, expense) => total + expense.totalCost,
+    0
+  );
+
+  const projectedBalance = currentBalance + monthPending;
+
+  const totalPostAnchorExpenses = state.expenses
+    .filter((expense) => {
+      if (expense.deletedAt) return false;
+      if (!openingDateMs) return true;
+      const expenseMs = new Date(expense.date).getTime();
+      return !Number.isNaN(expenseMs) && expenseMs > openingDateMs;
+    })
+    .reduce((sum, expense) => sum + expense.totalCost, 0);
+
+  const saveFinancialSetup = () => {
+    const nowIso = new Date().toISOString();
+    const previous = financialSettings;
+
+    const record: UtilitySettings = {
+      id: 'financial-settings',
+      referenceMonth: 'financial',
+      gasCylinderPrice: 0,
+      electricityBill: 0,
+      electricityKwh: 0,
+      waterBill: 0,
+      productionCycles: 0,
+      ...(previous || {}),
+      openingBalance: parseMoney(openingBalanceStr),
+      openingDate: nowIso,
+      readyStockOpening: previous?.readyStockOpening ?? 13,
+      readyStockOpeningDate: previous?.readyStockOpeningDate || nowIso,
+      pixKey: pixKey.trim(),
+      pixRecipientName: pixRecipientName.trim(),
+      pixCity: pixCity.trim().toUpperCase(),
+      updatedAt: nowIso,
+    };
+
+    const utilitySettings = previous
+      ? state.utilitySettings.map((item) =>
+          item.id === record.id ? record : item
+        )
+      : [record, ...(state.utilitySettings || [])];
+
+    onStateChange({ ...state, utilitySettings });
+    setShowSetup(false);
+    alert('✅ Saldo atual salvo como novo marco financeiro.');
+  };
+
+  const saveHistoricalMonth = () => {
+    const revenue = parseMoney(historyRevenueStr);
+    if (!historyMonth || revenue <= 0) {
+      alert('Informe o mês e o total vendido.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const existing = state.utilitySettings.find(
+      (item) =>
+        item.referenceMonth === historyMonth &&
+        item.id !== 'financial-settings'
+    );
+
+    const record: UtilitySettings = {
+      id: existing?.id || `utilities-${historyMonth}`,
+      referenceMonth: historyMonth,
+      gasCylinderPrice: existing?.gasCylinderPrice || 0,
+      electricityBill: existing?.electricityBill || 0,
+      electricityKwh: existing?.electricityKwh || 0,
+      waterBill: existing?.waterBill || 0,
+      productionCycles: existing?.productionCycles || 0,
+      ...(existing || {}),
+      historicalRevenue: revenue,
+      historicalEstimatedCost: historyCostStr.trim()
+        ? parseMoney(historyCostStr)
+        : undefined,
+      updatedAt: nowIso,
+    };
+
+    const utilitySettings = existing
+      ? state.utilitySettings.map((item) =>
+          item.id === existing.id ? record : item
+        )
+      : [record, ...state.utilitySettings];
+
+    onStateChange({ ...state, utilitySettings });
+    setHistoryRevenueStr('');
+    setHistoryCostStr('');
+    alert('✅ Histórico mensal salvo.');
+  };
 
   const moveMonth = (offset: number) => {
-    const index = monthOptions.findIndex((month) => month.key === currentMonthKey);
+    const index = monthOptions.findIndex(
+      (month) => month.key === currentMonthKey
+    );
     const next = monthOptions[index + offset];
     if (next) setCurrentMonthKey(next.key);
   };
 
-  const yearCards = [
-    ['Faturamento', yearRevenue, 'Tudo que foi vendido no ano, pago ou pendente', 'indigo'],
-    ['Total recebido', yearReceived, 'Dinheiro que realmente entrou no ano', 'emerald'],
-    ['Total a receber', yearPending, 'Fiados do ano que ainda estão pendentes', 'amber'],
-    ['Compras para o estoque', yearStockPurchases, 'Valor pago em ingredientes e embalagens no ano', 'rose'],
-    ['Custo da produção', yearProductionCost, 'Custo dos lotes produzidos no ano', 'orange'],
-    ['Lucro previsto nas vendas', yearExpectedProfit, 'Faturamento menos custo dos potes vendidos', 'purple'],
-    ['Lucro acumulado disponível', accumulatedAvailableProfit, 'Dinheiro acumulado na conta após as compras de estoque registradas', 'slate'],
-    ['Patrimônio do negócio', businessPatrimony, 'Lucro disponível + valor atual estimado do estoque', 'teal'],
-  ] as const;
-
-  const monthCards = [
-    ['Faturamento', monthRevenue, `${monthSoldUnits} potes em ${monthSales.length} pedidos`, 'indigo'],
-    ['Total recebido', monthReceived, 'Dinheiro que já entrou no mês', 'emerald'],
-    ['Total a receber', monthPending, 'Saldo de vendas pendentes', 'amber'],
-    ['Custo vendido', monthSoldCost, 'Custo dos potes que foram vendidos', 'rose'],
-    ['Lucro previsto', monthExpectedProfit, 'Faturamento menos custo dos potes vendidos', 'purple'],
-    ['Compras de estoque', monthStockPurchases, 'Dinheiro gasto para abastecer o Depósito', 'orange'],
-    ['Movimento líquido do mês', monthCashMovement, 'Recebido no mês menos compras de estoque do mês', 'slate'],
-    ['Produção', monthProducedUnits, 'Quantidade de potes produzidos no mês', 'teal'],
-  ] as const;
-
-  const cardClass: Record<string, string> = {
-    indigo: 'bg-indigo-50 border-indigo-200 text-indigo-900', emerald: 'bg-emerald-50 border-emerald-200 text-emerald-900',
-    amber: 'bg-amber-50 border-amber-200 text-amber-900', rose: 'bg-rose-50 border-rose-200 text-rose-900',
-    orange: 'bg-orange-50 border-orange-200 text-orange-900', teal: 'bg-teal-50 border-teal-200 text-teal-900',
-    purple: 'bg-purple-50 border-purple-200 text-purple-900', slate: 'bg-slate-50 border-slate-200 text-slate-900',
-  };
-
   return (
-    <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-8 pb-24 overflow-x-hidden">
+    <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6 pb-24 overflow-x-hidden">
       <section className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2 text-indigo-800 font-extrabold text-lg"><TrendingUp className="w-5 h-5" /> Caixa anual — {selectedYear}</div>
-          <span className="text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1 rounded-full">Caixa e patrimônio separados</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {yearCards.map(([label, value, help, tone]) => (
-            <div key={label} className={`border p-4 rounded-2xl space-y-1 ${cardClass[tone]}`}>
-              <div className="text-[10px] font-black uppercase tracking-wider">{label}</div>
-              <div className="text-2xl font-black font-mono">{formatCurrency(value)}</div>
-              <p className="text-[10px] opacity-80 font-medium">{help}</p>
-            </div>
-          ))}
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+          <div>
+            <span className="text-xs font-black uppercase text-indigo-700 flex items-center gap-1.5">
+              <Landmark className="w-4 h-4" /> Caixa simples
+            </span>
+            <h2 className="text-2xl font-black text-slate-900 mt-1">
+              Visão do negócio
+            </h2>
+            <p className="text-xs text-slate-500">
+              Só dinheiro real movimenta este caixa. O custo do pote continua na Produção e não é descontado duas vezes.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold"
+            >
+              Meses anteriores
+            </button>
+            <button
+              onClick={() => setShowSetup(!showSetup)}
+              className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold flex items-center gap-1.5"
+            >
+              <Settings2 className="w-4 h-4" /> Saldo / PIX
+            </button>
+          </div>
         </div>
 
-        <div className="rounded-2xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-950">
-          <strong>Leitura do patrimônio:</strong> o dinheiro que permanece na conta aparece como <strong>lucro acumulado disponível</strong>.
-          O que ainda existe no Depósito continua sendo patrimônio e aparece somado apenas no card <strong>Patrimônio do negócio</strong>.
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="border border-emerald-200 bg-emerald-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-emerald-700">
+              Saldo atual
+            </span>
+            <strong className="block text-2xl font-black mt-1">
+              {financialSettings ? formatCurrency(currentBalance) : 'Definir saldo'}
+            </strong>
+            <small className="text-emerald-700">
+              Dinheiro que existe agora na conta
+            </small>
+          </div>
+
+          <div className="border border-orange-200 bg-orange-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-orange-700">
+              Gastos após o marco
+            </span>
+            <strong className="block text-2xl font-black mt-1">
+              {formatCurrency(totalPostAnchorExpenses)}
+            </strong>
+            <small className="text-orange-700">
+              Só compras pagas depois do saldo informado
+            </small>
+          </div>
+
+          <div className="border border-amber-200 bg-amber-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-amber-700">
+              A receber no mês
+            </span>
+            <strong className="block text-2xl font-black mt-1">
+              {formatCurrency(monthPending)}
+            </strong>
+            <small className="text-amber-700">
+              Vendas ainda não pagas
+            </small>
+          </div>
+
+          <div className="border border-indigo-200 bg-indigo-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-indigo-700">
+              Saldo projetado
+            </span>
+            <strong className="block text-2xl font-black mt-1">
+              {financialSettings ? formatCurrency(projectedBalance) : 'Definir saldo'}
+            </strong>
+            <small className="text-indigo-700">
+              Saldo atual + o que ainda falta receber
+            </small>
+          </div>
         </div>
       </section>
 
-      <section className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-6">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-          <div><span className="flex items-center gap-2 text-purple-700 font-bold text-xs uppercase"><Calendar className="w-4 h-4" /> Visão mensal</span><h3 className="text-2xl font-black text-slate-900 mt-1">Caixa de {formatMonthShort(currentMonthKey)}</h3></div>
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-1.5 rounded-2xl">
-            <button type="button" onClick={() => moveMonth(-1)} className="p-2 hover:bg-white rounded-xl"><ChevronLeft className="w-4 h-4" /></button>
-            <select value={currentMonthKey} onChange={(event) => setCurrentMonthKey(event.target.value)} className="bg-transparent font-black text-sm text-purple-900 px-2 py-1 focus:outline-none">
-              {monthOptions.map((month) => <option key={month.key} value={month.key}>{month.label}</option>)}
+      {showSetup && (
+        <section className="bg-white border-2 border-indigo-200 rounded-3xl p-6 shadow-sm space-y-4">
+          <h3 className="font-black text-slate-900">Marco financeiro e PIX</h3>
+          <p className="text-xs text-slate-500">
+            Informe o saldo que existe AGORA. Tudo que aconteceu antes fica absorvido nesse valor.
+          </p>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <input
+              value={openingBalanceStr}
+              onChange={(e) => setOpeningBalanceStr(e.target.value)}
+              placeholder="Saldo atual da conta (R$)"
+              className="p-3 rounded-xl border border-slate-200"
+            />
+            <input
+              value={pixKey}
+              onChange={(e) => setPixKey(e.target.value)}
+              placeholder="Chave PIX"
+              className="p-3 rounded-xl border border-slate-200"
+            />
+            <input
+              value={pixRecipientName}
+              onChange={(e) => setPixRecipientName(e.target.value)}
+              placeholder="Nome do recebedor"
+              className="p-3 rounded-xl border border-slate-200"
+            />
+            <input
+              value={pixCity}
+              onChange={(e) => setPixCity(e.target.value)}
+              placeholder="Cidade PIX"
+              className="p-3 rounded-xl border border-slate-200"
+            />
+          </div>
+
+          <button
+            onClick={saveFinancialSetup}
+            className="px-5 py-3 rounded-2xl bg-indigo-600 text-white font-black text-sm flex items-center gap-2"
+          >
+            <Save className="w-4 h-4" /> Salvar saldo atual
+          </button>
+        </section>
+      )}
+
+      {showHistory && (
+        <section className="bg-white border-2 border-amber-200 rounded-3xl p-6 shadow-sm space-y-4">
+          <h3 className="font-black text-slate-900">Histórico anterior ao aplicativo</h3>
+          <p className="text-xs text-slate-500">
+            Mantido apenas como histórico comercial; não altera o saldo atual.
+          </p>
+
+          <div className="grid sm:grid-cols-3 gap-3">
+            <input
+              type="month"
+              value={historyMonth}
+              onChange={(e) => setHistoryMonth(e.target.value)}
+              className="p-3 rounded-xl border border-slate-200"
+            />
+            <input
+              value={historyRevenueStr}
+              onChange={(e) => setHistoryRevenueStr(e.target.value)}
+              placeholder="Total vendido no mês"
+              className="p-3 rounded-xl border border-slate-200"
+            />
+            <input
+              value={historyCostStr}
+              onChange={(e) => setHistoryCostStr(e.target.value)}
+              placeholder="Gasto estimado (opcional)"
+              className="p-3 rounded-xl border border-slate-200"
+            />
+          </div>
+
+          <button
+            onClick={saveHistoricalMonth}
+            className="px-5 py-3 rounded-2xl bg-amber-500 text-slate-950 font-black text-sm flex items-center gap-2"
+          >
+            <Save className="w-4 h-4" /> Salvar histórico
+          </button>
+        </section>
+      )}
+
+      <section className="bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+          <div>
+            <span className="text-xs font-black uppercase text-slate-500 flex items-center gap-1.5">
+              <Calendar className="w-4 h-4" /> Visão mensal
+            </span>
+            <h3 className="text-xl font-black text-slate-900 mt-1">
+              {formatMonthShort(currentMonthKey)}
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => moveMonth(-1)}
+              className="p-2 rounded-xl bg-slate-100 text-slate-700"
+              aria-label="Mês anterior"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <select
+              value={currentMonthKey}
+              onChange={(e) => setCurrentMonthKey(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-slate-200 text-sm font-bold bg-white"
+            >
+              {monthOptions.map((month) => (
+                <option key={month.key} value={month.key}>
+                  {month.label}
+                </option>
+              ))}
             </select>
-            <button type="button" onClick={() => moveMonth(1)} className="p-2 hover:bg-white rounded-xl"><ChevronRight className="w-4 h-4" /></button>
+
+            <button
+              onClick={() => moveMonth(1)}
+              className="p-2 rounded-xl bg-slate-100 text-slate-700"
+              aria-label="Próximo mês"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {monthCards.map(([label, value, help, tone]) => (
-            <div key={label} className={`border p-4 rounded-2xl space-y-1 ${cardClass[tone]}`}>
-              <div className="text-[10px] font-black uppercase tracking-wider">{label}</div>
-              <div className="text-2xl font-black font-mono">{label === 'Produção' ? `${value} potes` : formatCurrency(value)}</div>
-              <p className="text-[10px] opacity-80 font-medium">{help}</p>
-            </div>
-          ))}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="border border-emerald-200 bg-emerald-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-emerald-700">Saldo atual</span>
+            <strong className="block text-xl font-black mt-1">
+              {financialSettings ? formatCurrency(currentBalance) : 'Definir saldo'}
+            </strong>
+            <small className="text-emerald-700">Valor real na conta</small>
+          </div>
+
+          <div className="border border-orange-200 bg-orange-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-orange-700">Gastos do mês</span>
+            <strong className="block text-xl font-black mt-1">
+              {formatCurrency(monthExpenses)}
+            </strong>
+            <small className="text-orange-700">Só compras pagas após o marco</small>
+          </div>
+
+          <div className="border border-sky-200 bg-sky-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-sky-700">Já recebido</span>
+            <strong className="block text-xl font-black mt-1">
+              {formatCurrency(monthReceived)}
+            </strong>
+            <small className="text-sky-700">Das vendas deste mês</small>
+          </div>
+
+          <div className="border border-amber-200 bg-amber-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-amber-700">A receber</span>
+            <strong className="block text-xl font-black mt-1">
+              {formatCurrency(monthPending)}
+            </strong>
+            <small className="text-amber-700">Fiados ainda pendentes</small>
+          </div>
+
+          <div className="border border-indigo-200 bg-indigo-50 rounded-2xl p-4">
+            <span className="text-[10px] uppercase font-black text-indigo-700">Saldo projetado</span>
+            <strong className="block text-xl font-black mt-1">
+              {financialSettings ? formatCurrency(projectedBalance) : 'Definir saldo'}
+            </strong>
+            <small className="text-indigo-700">Saldo atual + a receber</small>
+          </div>
         </div>
 
-        <div className="cash-chart-card">
-          <div className="cash-chart-card__heading">
-            <div><span><BarChart3 className="w-4 h-4" /> Movimentação financeira</span><h4>Vendido e recebido por semana</h4></div>
-            <div className="cash-chart-legend"><span><i className="cash-chart-dot cash-chart-dot--revenue" /> Vendido</span><span><i className="cash-chart-dot cash-chart-dot--profit" /> Recebido</span></div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 flex items-start gap-3">
+          <TrendingUp className="w-5 h-5 text-indigo-600 mt-0.5" />
+          <div>
+            <strong className="text-sm text-slate-900">
+              Custo do pote continua ativo na Produção
+            </strong>
+            <p className="text-xs text-slate-500 mt-1">
+              Ingredientes, embalagem, água, luz e gás continuam calculados para precificação e reposição. Eles não são descontados novamente deste Caixa.
+            </p>
           </div>
-          <div className="cash-chart" role="img" aria-label="Gráfico semanal dos valores vendidos e recebidos">
-            {weeklyChart.map((week) => (
-              <div className="cash-chart-week" key={week.label}>
-                <div className="cash-chart-values"><span>{week.faturamento ? formatCurrency(week.faturamento) : '—'}</span><span>{week.recebido ? formatCurrency(week.recebido) : '—'}</span></div>
-                <div className="cash-chart-bars">
-                  <span className="cash-chart-bar cash-chart-bar--revenue" style={{ height: week.faturamento ? `${(week.faturamento / graphMaximum) * 100}%` : '0' }} title={`Vendido: ${formatCurrency(week.faturamento)}`} />
-                  <span className="cash-chart-bar cash-chart-bar--profit" style={{ height: week.recebido ? `${(week.recebido / graphMaximum) * 100}%` : '0' }} title={`Recebido: ${formatCurrency(week.recebido)}`} />
-                </div>
-                <strong>{week.label}</strong>
-              </div>
-            ))}
-          </div>
-          <p className="cash-chart-caption">Cada grupo representa os dias do mês. Roxo = vendido; verde = dinheiro recebido.</p>
         </div>
       </section>
     </div>
