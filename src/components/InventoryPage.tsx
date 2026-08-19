@@ -140,6 +140,51 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   // AJUSTE RÁPIDO DE QUANTIDADE DO ESTOQUE (+ / -)
   const handleAdjustQuantity = (itemId: string, delta: number) => {
     const nowIso = new Date().toISOString();
+    const target = state.inventory.find((item) => item.id === itemId);
+
+    if (!target) return;
+
+    // INVENTORY_V10_UNDO_SINGLE_PURCHASE_2026_08_19
+    // Caso especial seguro: item de compra única (1 comprado, 1 restante) sendo zerado.
+    // Isso é tratado como "desfazer a compra", então estoque e despesa são estornados juntos.
+    // Itens maiores ou parcialmente consumidos continuam sendo apenas ajuste físico de estoque.
+    if (
+      delta < 0 &&
+      target.totalQuantityBought === 1 &&
+      target.remainingQuantity === 1
+    ) {
+      const linkedExpense = state.expenses.find((expense) => {
+        if (expense.deletedAt) return false;
+        const linkedById = expense.notes?.includes(`inventoryItemId=${itemId}`) ?? false;
+        const linkedLegacy =
+          expense.description === `Compra: ${target.name}` ||
+          expense.description.startsWith(`Compra: ${target.name} (`);
+        return linkedById || linkedLegacy;
+      });
+
+      if (linkedExpense) {
+        const updatedInventory = state.inventory.map((item) =>
+          item.id === itemId
+            ? { ...item, remainingQuantity: 0, deletedAt: nowIso, updatedAt: nowIso }
+            : item
+        );
+
+        const updatedExpenses = state.expenses.map((expense) =>
+          expense.id === linkedExpense.id
+            ? { ...expense, deletedAt: nowIso, updatedAt: nowIso }
+            : expense
+        );
+
+        onStateChange({
+          ...state,
+          inventory: updatedInventory,
+          expenses: updatedExpenses,
+        });
+
+        return;
+      }
+    }
+
     const updatedInventory = state.inventory.map((item) => {
       if (item.id === itemId) {
         const newRemaining = Math.max(0, item.remainingQuantity + delta);
